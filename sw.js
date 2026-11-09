@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sf-streets-v1';
+const CACHE_NAME = 'sf-streets-v2';
 const ASSETS = [
   './',
   './index.html',

@@ -670,10 +670,74 @@ function showToast(msg) {
   }, 4200);
 }
 
-/* ---------- Strava API Sync (Access Token & OAuth) ---------- */
+/* ---------- Strava API Sync (Auto-Refresh, Access Token & OAuth) ---------- */
+
+function getStravaConfig() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY_STRAVA) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveStravaConfig(patch) {
+  const next = { ...getStravaConfig(), ...patch };
+  localStorage.setItem(STORAGE_KEY_STRAVA, JSON.stringify(next));
+  updateStravaUIState();
+  return next;
+}
+
+function updateStravaUIState() {
+  const cfg = getStravaConfig();
+  const cidInput = document.getElementById('input-strava-client-id');
+  const secInput = document.getElementById('input-strava-client-secret');
+  const syncBtn = document.getElementById('btn-open-sync-modal');
+  const oauthBtn = document.getElementById('btn-strava-oauth');
+
+  if (cidInput && cfg.clientId && !cidInput.value) cidInput.value = cfg.clientId;
+  if (secInput && cfg.clientSecret && !secInput.value) secInput.value = cfg.clientSecret;
+
+  if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
+    if (syncBtn) syncBtn.textContent = '↻ Sync Strava';
+    if (oauthBtn) oauthBtn.textContent = 'Reconnect Strava OAuth (Connected ✓)';
+  }
+}
+
+async function getValidStravaAccessToken() {
+  const cfg = getStravaConfig();
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  if (cfg.accessToken && cfg.expiresAt && cfg.expiresAt > nowSec + 120) {
+    return cfg.accessToken;
+  }
+
+  if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
+    const res = await fetch('https://www.strava.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: cfg.clientId,
+        client_secret: cfg.clientSecret,
+        grant_type: 'refresh_token',
+        refresh_token: cfg.refreshToken
+      })
+    });
+    if (!res.ok) throw new Error(`Token refresh failed (${res.status})`);
+    const data = await res.json();
+    if (data.access_token) {
+      saveStravaConfig({
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || cfg.refreshToken,
+        expiresAt: data.expires_at
+      });
+      return data.access_token;
+    }
+  }
+  return null;
+}
 
 async function fetchStravaActivitiesWithToken(accessToken) {
-  showToast('Syncing walks & runs from Strava API...');
+  showToast('Syncing walks & runs from Strava...');
   let page = 1;
   const newWalks = [];
   const existingIds = new Set(state.walks.map((w) => w.id));
@@ -722,7 +786,7 @@ async function fetchStravaActivitiesWithToken(accessToken) {
       updateDashboardStats();
       showToast(`Synced ${newWalks.length} Strava walks (+${newlyMatched} new SF blocks)!`);
     } else {
-      showToast('Strava sync complete (no new walk/run polylines found).');
+      showToast('Strava up to date (no new walks found).');
     }
   } catch (err) {
     showToast(`Strava sync error: ${err.message}`);
@@ -730,32 +794,48 @@ async function fetchStravaActivitiesWithToken(accessToken) {
 }
 
 async function checkStravaOAuthCallback() {
+  updateStravaUIState();
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
-  if (!code) return;
+  if (!code) {
+    // Auto-sync on launch if already connected via OAuth!
+    const cfg = getStravaConfig();
+    if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
+      try {
+        const token = await getValidStravaAccessToken();
+        if (token) await fetchStravaActivitiesWithToken(token);
+      } catch (e) {
+        console.warn('Auto-sync skipped:', e);
+      }
+    }
+    return;
+  }
 
   // Clean URL
   window.history.replaceState({}, document.title, window.location.pathname);
 
-  const rawCfg = localStorage.getItem(STORAGE_KEY_STRAVA);
-  if (!rawCfg) return;
-  const { clientId, clientSecret } = JSON.parse(rawCfg);
-  if (!clientId || !clientSecret) return;
+  const cfg = getStravaConfig();
+  if (!cfg.clientId || !cfg.clientSecret) return;
 
   try {
-    showToast('Exchanging Strava OAuth code...');
+    showToast('Linking Strava account...');
     const res = await fetch('https://www.strava.com/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
+        client_id: cfg.clientId,
+        client_secret: cfg.clientSecret,
         code,
         grant_type: 'authorization_code'
       })
     });
     const data = await res.json();
     if (data.access_token) {
+      saveStravaConfig({
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt: data.expires_at
+      });
       await fetchStravaActivitiesWithToken(data.access_token);
     } else {
       showToast('Strava OAuth token exchange failed.');
@@ -1032,14 +1112,19 @@ function wireEvents() {
     }
   });
 
-  // Strava Access Token sync
+  // Strava Access Token or saved Refresh Token sync
   document.getElementById('btn-sync-strava-token').addEventListener('click', async () => {
-    const token = document.getElementById('input-strava-token').value.trim();
-    if (!token) {
-      showToast('Paste a Strava Access Token first.');
+    const manualToken = document.getElementById('input-strava-token').value.trim();
+    if (manualToken) {
+      await fetchStravaActivitiesWithToken(manualToken);
       return;
     }
-    await fetchStravaActivitiesWithToken(token);
+    const autoToken = await getValidStravaAccessToken();
+    if (autoToken) {
+      await fetchStravaActivitiesWithToken(autoToken);
+      return;
+    }
+    showToast('Connect via Strava OAuth below (one-time setup) or paste an Access Token.');
   });
 
   // Strava OAuth redirect
@@ -1050,7 +1135,7 @@ function wireEvents() {
       showToast('Enter your Strava Client ID & Client Secret first.');
       return;
     }
-    localStorage.setItem(STORAGE_KEY_STRAVA, JSON.stringify({ clientId, clientSecret }));
+    saveStravaConfig({ clientId, clientSecret });
     const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
     const authUrl =
       `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}` +
