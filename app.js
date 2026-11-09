@@ -6,7 +6,7 @@ const SNAP_RADIUS_METERS = 28;
 const GRID_CELL_DEG = 0.0025; // ~250m grid cells
 const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
 // Cloudflare Worker that holds the shared Strava app secret (see worker/). Empty = users bring their own keys.
-const STRAVA_PROXY_URL = '';
+const STRAVA_PROXY_URL = 'https://sf-streets-strava.strange-habits.workers.dev';
 
 const state = {
   blocks: [],            // [{ id, s, f, t, n, c, checkpoints }]
@@ -1708,7 +1708,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=9');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=10');
       await reg.update();
     } catch {}
   }
