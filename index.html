@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>sf streets // strange habits — walk every block in san francisco</title>
+  <meta name="description" content="Track your progress walking every street and block in San Francisco using Strava, Garmin GPX files, or live phone GPS." />
+  <meta name="theme-color" content="#15181e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="sf streets" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <script defer src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <link rel="stylesheet" href="./index.css" />
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <!-- Full-screen MapLibre WebGL Map -->
+    <div id="map-container" aria-label="San Francisco Street Completion Map"></div>
+
+    <!-- Top-Right Legend & Selected Block Inspector -->
+    <div class="map-overlay-top-right">
+      <div class="map-legend-pill panel-surface" id="map-legend">
+        <span class="legend-item">
+          <span class="legend-line" style="background: #24c278;"></span>walked
+        </span>
+        <span class="legend-item">
+          <span class="legend-line" style="background: #ee5630;"></span>gps trace
+        </span>
+        <span class="legend-item">
+          <span class="legend-line" style="background: #4a5264;"></span>unwalked
+        </span>
+      </div>
+
+      <section id="block-inspector-card" class="inspector-card panel-surface hidden" aria-live="polite">
+        <div class="inspector-header">
+          <div>
+            <h2 id="inspector-street-name" class="inspector-title">Valencia St</h2>
+            <p id="inspector-cross-streets" class="inspector-subtitle">18th St → 19th St · Mission</p>
+          </div>
+          <button id="btn-close-inspector" class="inspector-close" aria-label="Close street inspector">&times;</button>
+        </div>
+        <div class="inspector-stats">
+          <span id="inspector-street-progress">Street: 0 / 0 blocks</span>
+          <span id="inspector-block-status">Unwalked</span>
+        </div>
+        <div class="inspector-actions">
+          <button id="btn-toggle-block-walked" class="btn btn-sm">Mark Block Walked</button>
+          <button id="btn-focus-full-street" class="btn btn-sm">Zoom Full Street</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Sidebar / Mobile Drawer -->
+    <aside id="sidebar-drawer" class="sidebar-panel panel-surface">
+      <div id="btn-mobile-sheet-toggle" class="mobile-sheet-toggle" role="button" tabindex="0" aria-label="Toggle street drawer">
+        <div class="sheet-grab-bar"></div>
+      </div>
+
+      <header class="brand-header">
+        <div class="brand-top-row">
+          <div class="brand-title-group">
+            <h1 class="brand-title">sf streets</h1>
+            <span class="brand-tag">// 415 log</span>
+          </div>
+          <div class="header-actions">
+            <button id="btn-record-gps" class="btn btn-sm" title="Record live walk using phone GPS">
+              <span id="gps-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ee5630;"></span>
+              <span id="gps-btn-label">Live GPS</span>
+            </button>
+            <button id="btn-open-sync-modal" class="btn btn-primary btn-sm">Sync Strava / GPX</button>
+          </div>
+        </div>
+
+        <div class="progress-summary">
+          <div class="progress-headline-row">
+            <span id="stat-overall-pct" class="progress-big-pct">0.0%</span>
+            <span id="stat-blocks-count" class="progress-sub-stats">0 / 14,203 blocks</span>
+          </div>
+          <div class="progress-bar-track" aria-label="San Francisco street completion bar">
+            <div id="bar-completed" class="progress-bar-fill-completed" style="width: 0%;"></div>
+            <div id="bar-partial" class="progress-bar-fill-partial" style="width: 0%;"></div>
+          </div>
+          <div class="progress-metrics-row">
+            <span><span class="metric-dot" style="background: var(--accent-emerald);"></span><strong id="stat-streets-done">0</strong> completed</span>
+            <span><span class="metric-dot" style="background: var(--accent-amber);"></span><strong id="stat-streets-partial">0</strong> in progress</span>
+            <span><strong id="stat-walks-count">0</strong> walks</span>
+          </div>
+        </div>
+
+        <div class="quick-actions-row">
+          <button id="btn-load-sample-walks" class="btn btn-sm">Try 5 Sample SF Walks</button>
+          <button id="btn-toggle-traces" class="btn btn-sm">Hide GPS Traces</button>
+          <button id="btn-reset-progress" class="btn btn-sm" title="Clear synced walks and manual blocks">Reset</button>
+        </div>
+      </header>
+
+      <section class="controls-section" aria-label="Filter streets and neighborhoods">
+        <div class="filter-row">
+          <input
+            id="input-street-search"
+            type="search"
+            class="input-control"
+            placeholder="Search 1,930 SF streets..."
+            autocomplete="off"
+          />
+          <select id="select-neighborhood" class="select-control" aria-label="Filter by San Francisco neighborhood">
+            <option value="ALL">All SF (42 nhoods)</option>
+          </select>
+        </div>
+        <nav class="status-tabs" aria-label="Street completion status filter">
+          <button id="tab-all" class="status-tab active" data-filter="all">All</button>
+          <button id="tab-partial" class="status-tab" data-filter="partial">In Progress</button>
+          <button id="tab-done" class="status-tab" data-filter="done">Completed</button>
+          <button id="tab-todo" class="status-tab" data-filter="todo">Unwalked</button>
+        </nav>
+      </section>
+
+      <div id="street-list" class="street-list-container" role="list"></div>
+    </aside>
+
+    <!-- Strava / Garmin GPX Sync Modal -->
+    <div id="sync-modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="sync-modal-title">
+      <div class="modal-card panel-surface">
+        <div class="modal-header">
+          <h2 id="sync-modal-title" class="modal-title">Sync Walks (Strava &amp; Garmin)</h2>
+          <button id="btn-close-sync-modal" class="inspector-close" aria-label="Close sync modal">&times;</button>
+        </div>
+
+        <!-- Option 1: Drop Garmin / Strava GPX, TCX, or JSON -->
+        <div class="sync-section">
+          <div class="sync-section-title">
+            <span>1. Drop Garmin / Strava GPX or JSON files</span>
+            <span class="brand-tag">instant · 100% free</span>
+          </div>
+          <p class="sync-section-desc">
+            Select one or more <code>.gpx</code>, <code>.tcx</code>, or Strava activity <code>.json</code> files from your phone or computer. Every GPS trace snaps against all 14,203 SF blocks locally.
+          </p>
+          <label for="input-file-upload" class="dropzone-label" id="file-dropzone">
+            <strong>Tap to choose .GPX / .TCX / .JSON files</strong>
+            <span>or drag and drop multiple activity files here</span>
+            <input id="input-file-upload" type="file" accept=".gpx,.tcx,.json" multiple style="display:none;" />
+          </label>
+        </div>
+
+        <!-- Option 2: Direct Strava Access Token -->
+        <div class="sync-section">
+          <div class="sync-section-title">
+            <span>2. Strava API Sync (Access Token or OAuth)</span>
+            <span class="brand-tag">strava v3 api</span>
+          </div>
+          <p class="sync-section-desc">
+            Create a free personal API app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener" style="color:var(--accent-orange);">strava.com/settings/api</a> (set Callback Domain to this page's host). Paste your Access Token below, or use Client ID + Secret for 1-click OAuth refresh.
+          </p>
+          <div class="filter-row">
+            <input
+              id="input-strava-token"
+              type="password"
+              class="input-control"
+              placeholder="Paste Strava Access Token (read,activity:read_all)"
+            />
+            <button id="btn-sync-strava-token" class="btn btn-primary">Fetch Strava</button>
+          </div>
+
+          <div class="form-grid" style="margin-top: 4px;">
+            <input id="input-strava-client-id" type="text" class="input-control" placeholder="Strava Client ID (optional)" />
+            <input id="input-strava-client-secret" type="password" class="input-control" placeholder="Client Secret (stored locally)" />
+          </div>
+          <button id="btn-strava-oauth" class="btn btn-sm" style="align-self: flex-start;">
+            Connect via Strava OAuth Redirect
+          </button>
+        </div>
+
+        <!-- Option 3: Backup / Restore Progress JSON -->
+        <div class="sync-section">
+          <div class="sync-section-title">
+            <span>3. Export / Backup Your Progress</span>
+            <span class="brand-tag">offline backup</span>
+          </div>
+          <div class="filter-row">
+            <button id="btn-export-backup" class="btn btn-sm" style="flex:1;">Download Backup (.json)</button>
+            <button id="btn-load-samples-from-modal" class="btn btn-sm" style="flex:1;">Load 5 Sample SF Walks</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Toast -->
+    <div id="status-toast" class="status-toast panel-surface hidden" role="status"></div>
+  </main>
+</body>
+</html>

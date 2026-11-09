@@ -1,0 +1,17 @@
+{
+  "name": "sf streets // strange habits",
+  "short_name": "sf streets",
+  "description": "Track your progress walking every street block in San Francisco with Strava, Garmin GPX, or live GPS.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#15181e",
+  "theme_color": "#15181e",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
