@@ -422,6 +422,19 @@ function initMap() {
   map.on('load', () => {
     mapLoaded = true;
 
+    // Slot our lines beneath the basemap's labels so street names stay readable.
+    const styleLayers = map.getStyle().layers || [];
+    const firstSymbol = styleLayers.find((l) => l.type === 'symbol');
+    const labelAnchor = firstSymbol ? firstSymbol.id : undefined;
+    const addUnderLabels = (layer) => map.addLayer(layer, labelAnchor);
+
+    // City/state/country labels are noise inside a single-city app; keep streets + neighborhoods.
+    for (const l of styleLayers) {
+      if (l.type === 'symbol' && /^place_(city|state|country|continent|capital)/.test(l.id)) {
+        map.setLayoutProperty(l.id, 'visibility', 'none');
+      }
+    }
+
     map.addSource('sf-blocks', {
       type: 'geojson',
       data: buildBlocksGeoJSON()
@@ -433,7 +446,7 @@ function initMap() {
     });
 
     // Unwalked street blocks
-    map.addLayer({
+    addUnderLabels({
       id: 'sf-blocks-unwalked',
       type: 'line',
       source: 'sf-blocks',
@@ -447,7 +460,7 @@ function initMap() {
     });
 
     // Walked street blocks (Cypress Emerald)
-    map.addLayer({
+    addUnderLabels({
       id: 'sf-blocks-walked',
       type: 'line',
       source: 'sf-blocks',
@@ -461,7 +474,7 @@ function initMap() {
     });
 
     // GPS walk traces (Golden Gate Terracotta)
-    map.addLayer({
+    addUnderLabels({
       id: 'sf-walks-layer',
       type: 'line',
       source: 'sf-walks',
@@ -475,7 +488,7 @@ function initMap() {
     });
 
     // Selected street or block highlight
-    map.addLayer({
+    addUnderLabels({
       id: 'sf-blocks-selected',
       type: 'line',
       source: 'sf-blocks',
@@ -489,7 +502,7 @@ function initMap() {
     });
 
     // Invisible wide hit target for easy tapping on mobile
-    map.addLayer({
+    addUnderLabels({
       id: 'sf-blocks-hit',
       type: 'line',
       source: 'sf-blocks',
@@ -1658,7 +1671,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=7');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=8');
       await reg.update();
     } catch {}
   }
