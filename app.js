@@ -1227,7 +1227,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=3');
       await reg.update();
     } catch {}
   }
