@@ -13,6 +13,7 @@ const state = {
   blockById: new Map(),
   streetsByName: new Map(), // name -> { name, neighborhoods: Set, blockIds: [] }
   spatialGrid: new Map(),   // "gx,gy" -> [{ blockId, idx, lng, lat }]
+  blockHits: new Map(),     // blockId -> Set(checkpointIdx) hit by any walk
   walkedBlockIds: new Set(),
   manualBlockIds: new Set(),
   walks: [],             // [{ id, name, date, source, coords: [[lng,lat],...] }]
@@ -106,55 +107,127 @@ function indexBlocksInSpatialGrid() {
   }
 }
 
-function matchWalksAgainstBlocks(walksToMatch) {
-  // Track which checkpoints of each block have been hit
-  const hitMap = new Map(); // blockId -> Set(checkpointIdx)
+const BLOCK_COMPLETE_FRACTION = 0.72;
 
-  for (const walk of walksToMatch) {
-    const denseCoords = interpolateLine(walk.coords, 14);
-    for (const [lng, lat] of denseCoords) {
-      // Quick bounding box filter for San Francisco
-      if (lng < -122.53 || lng > -122.35 || lat < 37.70 || lat > 37.84) continue;
+// Accumulates checkpoint hits for a coordinate path; returns the block ids it touched.
+function accumulateHits(coords) {
+  const touched = new Set();
+  const denseCoords = interpolateLine(coords, 14);
+  for (const [lng, lat] of denseCoords) {
+    // Quick bounding box filter for San Francisco
+    if (lng < -122.53 || lng > -122.35 || lat < 37.70 || lat > 37.84) continue;
 
-      const gx = Math.floor(lng / GRID_CELL_DEG);
-      const gy = Math.floor(lat / GRID_CELL_DEG);
+    const gx = Math.floor(lng / GRID_CELL_DEG);
+    const gy = Math.floor(lat / GRID_CELL_DEG);
 
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const bucket = state.spatialGrid.get(`${gx + dx},${gy + dy}`);
-          if (!bucket) continue;
-          for (const node of bucket) {
-            const d = haversineMeters(lng, lat, node.lng, node.lat);
-            if (d <= SNAP_RADIUS_METERS) {
-              let hits = hitMap.get(node.blockId);
-              if (!hits) {
-                hits = new Set();
-                hitMap.set(node.blockId, hits);
-              }
-              hits.add(node.idx);
-            }
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const bucket = state.spatialGrid.get(`${gx + dx},${gy + dy}`);
+        if (!bucket) continue;
+        for (const node of bucket) {
+          if (haversineMeters(lng, lat, node.lng, node.lat) > SNAP_RADIUS_METERS) continue;
+          let hits = state.blockHits.get(node.blockId);
+          if (!hits) {
+            hits = new Set();
+            state.blockHits.set(node.blockId, hits);
           }
+          hits.add(node.idx);
+          touched.add(node.blockId);
         }
       }
     }
   }
-
-  let newlyMatched = 0;
-  for (const [blockId, hits] of hitMap.entries()) {
-    const block = state.blockById.get(blockId);
-    if (!block) continue;
-    const required = Math.max(1, Math.ceil(block.checkpoints.length * 0.72));
-    if (hits.size >= required && !state.walkedBlockIds.has(blockId)) {
-      state.walkedBlockIds.add(blockId);
-      newlyMatched++;
-    }
-  }
-  return newlyMatched;
+  return touched;
 }
 
+// Marks touched blocks that crossed the completion threshold; returns the newly walked ids.
+function promoteCompletedBlocks(touched) {
+  const newBlockIds = [];
+  for (const blockId of touched) {
+    if (state.walkedBlockIds.has(blockId)) continue;
+    const block = state.blockById.get(blockId);
+    const hits = state.blockHits.get(blockId);
+    if (!block || !hits) continue;
+    const required = Math.max(1, Math.ceil(block.checkpoints.length * BLOCK_COMPLETE_FRACTION));
+    if (hits.size >= required) {
+      state.walkedBlockIds.add(blockId);
+      newBlockIds.push(blockId);
+    }
+  }
+  return newBlockIds;
+}
+
+function isStreetFinished(streetName) {
+  const info = state.streetsByName.get(streetName);
+  return !!info && info.blockIds.every((id) => state.walkedBlockIds.has(id));
+}
+
+function streetsFinishedBy(newBlockIds) {
+  const finished = [];
+  const seen = new Set();
+  for (const bid of newBlockIds) {
+    const b = state.blockById.get(bid);
+    if (!b || seen.has(b.s)) continue;
+    seen.add(b.s);
+    if (isStreetFinished(b.s)) finished.push(b.s);
+  }
+  return finished;
+}
+
+function countFinishedStreets() {
+  let n = 0;
+  for (const name of state.streetsByName.keys()) {
+    if (isStreetFinished(name)) n++;
+  }
+  return n;
+}
+
+function dominantNeighborhoods(blockIds, limit = 2) {
+  const counts = new Map();
+  for (const bid of blockIds) {
+    const b = state.blockById.get(bid);
+    if (b) counts.set(b.n, (counts.get(b.n) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map((e) => e[0]);
+}
+
+function applyWalkPath(coords) {
+  const touched = accumulateHits(coords);
+  const newBlockIds = promoteCompletedBlocks(touched);
+  return { touched, newBlockIds, streetsFinished: streetsFinishedBy(newBlockIds) };
+}
+
+function walkSortKey(w) {
+  return w.ts || w.date || '';
+}
+
+// Replays every walk chronologically so each one knows what it newly unlocked.
 function recomputeAllWalkMatches() {
+  state.blockHits = new Map();
   state.walkedBlockIds = new Set(state.manualBlockIds);
-  matchWalksAgainstBlocks(state.walks);
+  let finishedStreets = countFinishedStreets();
+
+  const ordered = state.walks.slice().sort((a, b) => {
+    const ka = walkSortKey(a);
+    const kb = walkSortKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  for (const walk of ordered) {
+    const { touched, newBlockIds, streetsFinished } = applyWalkPath(walk.coords);
+    finishedStreets += streetsFinished.length;
+    walk.stats = {
+      touchedBlocks: touched.size,
+      newBlockIds,
+      streetsFinished,
+      neighborhoods: dominantNeighborhoods(newBlockIds.length ? newBlockIds : Array.from(touched)),
+      cumulativeBlocks: state.walkedBlockIds.size,
+      cumulativeStreets: finishedStreets
+    };
+  }
 }
 
 /* ---------- Polyline & GPX/TCX Parsers ---------- */
@@ -226,11 +299,14 @@ function parseGpxOrTcxText(xmlText, fileName) {
   }
 
   const nameEl = doc.querySelector('trk > name, rte > name, Id');
+  const timeEl = doc.querySelector('trkpt > time, metadata > time, Trackpoint > Time');
+  const ts = timeEl && timeEl.textContent.trim() ? timeEl.textContent.trim() : new Date().toISOString();
   const walkName = nameEl ? nameEl.textContent.trim() : fileName.replace(/\.(gpx|tcx)$/i, '');
   return {
     id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     name: walkName || 'Imported GPS Walk',
-    date: new Date().toISOString().slice(0, 10),
+    date: ts.slice(0, 10),
+    ts,
     source: 'GPX/TCX File',
     coords
   };
@@ -246,7 +322,11 @@ function saveStateToStorage() {
         id: w.id,
         name: w.name,
         date: w.date,
+        ts: w.ts,
         source: w.source,
+        stravaId: w.stravaId,
+        summaryPosted: w.summaryPosted,
+        summaryPostedAt: w.summaryPostedAt,
         coords: w.coords
       }))
     };
@@ -529,6 +609,7 @@ function updateDashboardStats() {
 
   renderStreetList(streetAggs);
   updateInspectorUI();
+  updateStravaUIState();
 }
 
 function renderStreetList(streetAggs) {
@@ -740,14 +821,177 @@ function updateStravaUIState() {
   const secInput = document.getElementById('input-strava-client-secret');
   const syncBtn = document.getElementById('btn-open-sync-modal');
   const oauthBtn = document.getElementById('btn-strava-oauth');
+  const connected = !!(cfg.refreshToken && cfg.clientId && cfg.clientSecret);
 
   if (cidInput && cfg.clientId && !cidInput.value) cidInput.value = cfg.clientId;
   if (secInput && cfg.clientSecret && !secInput.value) secInput.value = cfg.clientSecret;
 
-  if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
+  if (connected) {
     if (syncBtn) syncBtn.textContent = '↻ Sync Strava';
-    if (oauthBtn) oauthBtn.textContent = 'Reconnect Strava OAuth (Connected ✓)';
+    if (oauthBtn) {
+      oauthBtn.textContent = hasStravaWriteScope()
+        ? 'Reconnect Strava OAuth (Connected ✓)'
+        : 'Reconnect Strava OAuth (grant write access)';
+    }
   }
+
+  const chk = document.getElementById('chk-auto-post-summary');
+  if (chk) chk.checked = cfg.autoPostSummary !== false;
+
+  const writeStatus = document.getElementById('strava-write-status');
+  if (writeStatus) {
+    writeStatus.textContent = !connected
+      ? 'connect strava first'
+      : hasStravaWriteScope()
+      ? 'write access ✓'
+      : 'reconnect to grant write access';
+  }
+
+  const pendingEl = document.getElementById('pending-summary-count');
+  if (pendingEl) pendingEl.textContent = pendingSummaryWalks().length;
+
+  const preview = document.getElementById('summary-preview');
+  if (preview) {
+    const latest = latestStravaWalk();
+    const summary = latest ? buildProgressSummary(latest) : null;
+    preview.textContent = summary
+      ? `${latest.name}\n\n${summary}`
+      : 'Sync a Strava walk in SF to preview its summary.';
+  }
+}
+
+/* ---------- Strava Description Progress Summaries ---------- */
+
+const MAX_SUMMARY_POSTS_PER_RUN = 15;
+const SUMMARY_FOOTER = 'strange-habits.com/sf-streets';
+// Matches a previously posted summary block so re-posting replaces instead of stacking.
+const SUMMARY_RE =
+  /[\d,]+ new blocks? walked\. \+[\d.]+%\s*\n\s*[\d,]+ of [\d,]+ sf blocks \([\d.]+%\)(?:\s*\n\s*strange-habits\.com\/sf-streets)?/gi;
+
+function stravaIdOf(walk) {
+  if (walk.stravaId) return String(walk.stravaId);
+  return walk.id && walk.id.startsWith('strava-') ? walk.id.slice('strava-'.length) : null;
+}
+
+function hasStravaWriteScope() {
+  const cfg = getStravaConfig();
+  return typeof cfg.scope === 'string' && cfg.scope.includes('activity:write');
+}
+
+function buildProgressSummary(walk) {
+  const s = walk.stats;
+  const total = state.blocks.length;
+  if (!s || !total) return null;
+  const n = s.newBlockIds.length;
+  const deltaPct = (n / total) * 100;
+  const totalPct = (s.cumulativeBlocks / total) * 100;
+  return [
+    `${n.toLocaleString()} new block${n === 1 ? '' : 's'} walked. +${deltaPct.toFixed(2)}%`,
+    `${s.cumulativeBlocks.toLocaleString()} of ${total.toLocaleString()} SF blocks (${totalPct.toFixed(1)}%)`,
+    SUMMARY_FOOTER
+  ].join('\n');
+}
+
+function mergeDescription(existing, summary) {
+  const kept = (existing || '')
+    .replace(SUMMARY_RE, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return kept ? `${kept}\n\n${summary}` : summary;
+}
+
+function stravaWalksNewestFirst() {
+  return state.walks
+    .filter((w) => stravaIdOf(w) && w.stats && w.stats.touchedBlocks > 0)
+    .sort((a, b) => (walkSortKey(a) < walkSortKey(b) ? 1 : -1));
+}
+
+function pendingSummaryWalks() {
+  return stravaWalksNewestFirst().filter((w) => !w.summaryPosted);
+}
+
+function latestStravaWalk() {
+  return stravaWalksNewestFirst()[0] || null;
+}
+
+async function requireStravaToken() {
+  try {
+    const token = await getValidStravaAccessToken();
+    if (token) return token;
+  } catch (err) {
+    showToast(`Strava auth error: ${err.message}`);
+    return null;
+  }
+  showToast('Connect Strava via OAuth first.');
+  return null;
+}
+
+async function postSummaryToStrava(accessToken, walk) {
+  const id = stravaIdOf(walk);
+  const summary = buildProgressSummary(walk);
+  if (!id || !summary) throw new Error('nothing to post');
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const url = `https://www.strava.com/api/v3/activities/${id}`;
+
+  const getRes = await fetch(url, { headers });
+  if (getRes.status === 429) throw new Error('rate-limited');
+  if (!getRes.ok) throw new Error(`GET ${getRes.status}`);
+  const detail = await getRes.json();
+
+  const putRes = await fetch(url, {
+    method: 'PUT',
+    headers,
+    body: new URLSearchParams({ description: mergeDescription(detail.description, summary) })
+  });
+  if (putRes.status === 401 || putRes.status === 403) throw new Error('no-write-scope');
+  if (putRes.status === 429) throw new Error('rate-limited');
+  if (!putRes.ok) throw new Error(`PUT ${putRes.status}`);
+
+  walk.summaryPosted = true;
+  walk.summaryPostedAt = new Date().toISOString();
+}
+
+function explainSummaryError(err) {
+  if (err.message === 'no-write-scope') {
+    saveStravaConfig({ scope: (getStravaConfig().scope || '').replace('activity:write', '') });
+    return 'Strava denied the edit — tap "Reconnect Strava OAuth" to grant write access.';
+  }
+  if (err.message === 'rate-limited') return 'Strava rate limit hit — try again in 15 minutes.';
+  return `Could not post summary: ${err.message}`;
+}
+
+async function postPendingStravaSummaries(accessToken, onlyWalkIds = null) {
+  if (!hasStravaWriteScope()) {
+    showToast('Reconnect Strava OAuth once to grant write access for summaries.');
+    return 0;
+  }
+  let queue = pendingSummaryWalks();
+  if (onlyWalkIds) {
+    const wanted = new Set(onlyWalkIds);
+    queue = queue.filter((w) => wanted.has(w.id));
+  }
+  if (queue.length === 0) return 0;
+
+  let posted = 0;
+  try {
+    for (const walk of queue.slice(0, MAX_SUMMARY_POSTS_PER_RUN)) {
+      await postSummaryToStrava(accessToken, walk);
+      posted++;
+    }
+  } catch (err) {
+    showToast(explainSummaryError(err));
+  }
+
+  saveStateToStorage();
+  updateStravaUIState();
+  if (posted > 0) {
+    const remaining = pendingSummaryWalks().length;
+    showToast(
+      `Posted progress to ${posted} Strava walk${posted === 1 ? '' : 's'}` +
+        (remaining ? ` (${remaining} still pending).` : '.')
+    );
+  }
+  return posted;
 }
 
 async function getValidStravaAccessToken() {
@@ -813,9 +1057,12 @@ async function fetchStravaActivitiesWithToken(accessToken) {
         if (!existingIds.has(walkId)) {
           newWalks.push({
             id: walkId,
+            stravaId: String(act.id),
             name: act.name || 'Strava Activity',
             date: (act.start_date_local || '').slice(0, 10),
+            ts: act.start_date || act.start_date_local || '',
             source: `Strava ${act.type || 'Walk'}`,
+            summaryPosted: false,
             coords
           });
           existingIds.add(walkId);
@@ -827,11 +1074,17 @@ async function fetchStravaActivitiesWithToken(accessToken) {
 
     if (newWalks.length > 0) {
       state.walks.push(...newWalks);
-      const newlyMatched = matchWalksAgainstBlocks(newWalks);
+      const before = state.walkedBlockIds.size;
+      recomputeAllWalkMatches();
+      const newlyMatched = state.walkedBlockIds.size - before;
       saveStateToStorage();
       refreshMapSources();
       updateDashboardStats();
       showToast(`Synced ${newWalks.length} Strava walks (+${newlyMatched} new SF blocks)!`);
+
+      if (getStravaConfig().autoPostSummary !== false && hasStravaWriteScope()) {
+        await postPendingStravaSummaries(accessToken, newWalks.map((w) => w.id));
+      }
     } else {
       showToast('Strava up to date (no new walks found).');
     }
@@ -859,6 +1112,7 @@ async function checkStravaOAuthCallback() {
   }
 
   // Clean URL
+  const grantedScope = params.get('scope') || '';
   window.history.replaceState({}, document.title, window.location.pathname);
 
   const cfg = getStravaConfig();
@@ -881,7 +1135,8 @@ async function checkStravaOAuthCallback() {
       saveStravaConfig({
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
-        expiresAt: data.expires_at
+        expiresAt: data.expires_at,
+        scope: grantedScope
       });
       await fetchStravaActivitiesWithToken(data.access_token);
     } else {
@@ -904,7 +1159,10 @@ function toggleLiveGpsRecording() {
     btnLabel.textContent = 'Live GPS';
     dot.style.background = '#ee5630';
     saveStateToStorage();
-    showToast('Live GPS walk saved.');
+    const live = state.activeLiveWalk;
+    const gained = live && live.stats ? live.stats.newBlockIds.length : 0;
+    state.activeLiveWalk = null;
+    showToast(`Live GPS walk saved (+${gained} new blocks).`);
     return;
   }
 
@@ -913,12 +1171,22 @@ function toggleLiveGpsRecording() {
     return;
   }
 
+  const liveTouched = new Set();
   const liveWalk = {
     id: `live-${Date.now()}`,
     name: `SF Live Walk (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
     date: new Date().toISOString().slice(0, 10),
+    ts: new Date().toISOString(),
     source: 'Live Phone GPS',
-    coords: []
+    coords: [],
+    stats: {
+      touchedBlocks: 0,
+      newBlockIds: [],
+      streetsFinished: [],
+      neighborhoods: [],
+      cumulativeBlocks: state.walkedBlockIds.size,
+      cumulativeStreets: countFinishedStreets()
+    }
   };
   state.walks.push(liveWalk);
   state.activeLiveWalk = liveWalk;
@@ -936,7 +1204,15 @@ function toggleLiveGpsRecording() {
         if (haversineMeters(last[0], last[1], pt[0], pt[1]) < 6) return;
       }
       coords.push(pt);
-      matchWalksAgainstBlocks([liveWalk]);
+      // Only the newest segment needs matching; hits accumulate across updates.
+      const { touched, newBlockIds, streetsFinished } = applyWalkPath(coords.slice(-2));
+      touched.forEach((id) => liveTouched.add(id));
+      const s = liveWalk.stats;
+      s.touchedBlocks = liveTouched.size;
+      s.newBlockIds.push(...newBlockIds);
+      s.streetsFinished.push(...streetsFinished);
+      s.cumulativeBlocks = state.walkedBlockIds.size;
+      s.cumulativeStreets += streetsFinished.length;
       saveStateToStorage();
       refreshMapSources();
       updateDashboardStats();
@@ -1189,8 +1465,48 @@ function wireEvents() {
     const authUrl =
       `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}` +
       `&response_type=code&redirect_uri=${redirectUri}` +
-      `&approval_prompt=auto&scope=read,activity:read_all`;
+      `&approval_prompt=auto&scope=read,activity:read_all,activity:write`;
     window.location.href = authUrl;
+  });
+
+  // Strava description progress summaries
+  document.getElementById('chk-auto-post-summary').addEventListener('change', (e) => {
+    saveStravaConfig({ autoPostSummary: e.target.checked });
+    if (e.target.checked && getStravaConfig().refreshToken && !hasStravaWriteScope()) {
+      showToast('Tap "Reconnect Strava OAuth" once to grant write access.');
+    }
+  });
+
+  document.getElementById('btn-post-latest-summary').addEventListener('click', async () => {
+    const latest = latestStravaWalk();
+    if (!latest) {
+      showToast('No synced Strava walks in SF yet.');
+      return;
+    }
+    if (!hasStravaWriteScope()) {
+      showToast('Reconnect Strava OAuth once to grant write access.');
+      return;
+    }
+    const token = await requireStravaToken();
+    if (!token) return;
+    try {
+      await postSummaryToStrava(token, latest);
+      saveStateToStorage();
+      updateStravaUIState();
+      showToast(`Posted progress to "${latest.name}"!`);
+    } catch (err) {
+      showToast(explainSummaryError(err));
+    }
+  });
+
+  document.getElementById('btn-post-pending-summaries').addEventListener('click', async () => {
+    if (pendingSummaryWalks().length === 0) {
+      showToast('Every synced SF walk already has a summary.');
+      return;
+    }
+    const token = await requireStravaToken();
+    if (!token) return;
+    await postPendingStravaSummaries(token);
   });
 
   // Export backup JSON
@@ -1403,7 +1719,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=5');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=6');
       await reg.update();
     } catch {}
   }

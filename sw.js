@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sf-streets-v5';
+const CACHE_NAME = 'sf-streets-v6';
 const DATA_ASSETS = [
   './data/sf-streets.json?v=4',
   './data/sample-walks.json'

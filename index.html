@@ -19,8 +19,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <script defer src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <link rel="stylesheet" href="./index.css?v=5" />
-  <script defer src="./app.js?v=5"></script>
+  <link rel="stylesheet" href="./index.css?v=6" />
+  <script defer src="./app.js?v=6"></script>
 </head>
 <body>
   <main class="app-shell">
@@ -181,6 +181,24 @@
           <button id="btn-strava-oauth" class="btn btn-sm" style="align-self: flex-start;">
             Connect via Strava OAuth Redirect
           </button>
+
+          <!-- Progress summaries written into Strava activity descriptions -->
+          <div class="summary-toggle-row">
+            <label class="toggle-label" for="chk-auto-post-summary">
+              <input id="chk-auto-post-summary" type="checkbox" checked />
+              Auto-post progress summary to new Strava walks
+            </label>
+            <span id="strava-write-status" class="brand-tag">connect strava first</span>
+          </div>
+          <pre id="summary-preview" class="summary-preview">Sync a Strava walk in SF to preview its summary.</pre>
+          <div class="filter-row">
+            <button id="btn-post-latest-summary" type="button" class="btn btn-sm" style="flex:1;">
+              Post to Latest Walk
+            </button>
+            <button id="btn-post-pending-summaries" type="button" class="btn btn-sm" style="flex:1;">
+              Post Pending (<span id="pending-summary-count">0</span>)
+            </button>
+          </div>
         </div>
 
         <!-- Option 3: Backup / Restore Progress JSON -->

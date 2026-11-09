@@ -602,6 +602,44 @@ html, body {
   gap: 8px;
 }
 
+.summary-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.toggle-label input {
+  accent-color: var(--accent-orange);
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
+.summary-preview {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .status-toast {
   position: fixed;
   bottom: 20px;
