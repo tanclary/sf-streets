@@ -124,6 +124,33 @@ html, body {
   text-transform: lowercase;
 }
 
+/* City picker styled as the title itself */
+.brand-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23a9b1c0' stroke-width='1.6' stroke-linecap='round'/></svg>") no-repeat right 2px center;
+  border: none;
+  padding: 2px 18px 2px 0;
+  margin-left: -2px;
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  text-transform: lowercase;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.brand-select:hover {
+  background-color: var(--bg-elevated);
+}
+
+.brand-select:focus {
+  outline: none;
+  background-color: var(--bg-elevated);
+}
+
 .brand-tag {
   font-family: var(--font-mono);
   font-size: 0.72rem;

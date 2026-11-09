@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>sf streets — walk every block in san francisco</title>
+  <title>sf streets — walk every block in your city</title>
   <meta name="description" content="Track your progress walking every street and block in San Francisco using Strava, Garmin GPX files, or live phone GPS." />
   <meta name="theme-color" content="#15181e" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -19,8 +19,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <script defer src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <link rel="stylesheet" href="./index.css?v=10" />
-  <script defer src="./app.js?v=10"></script>
+  <link rel="stylesheet" href="./index.css?v=11" />
+  <script defer src="./app.js?v=11"></script>
 </head>
 <body>
   <main class="app-shell">
@@ -64,7 +64,12 @@
     <div class="side-column">
       <header id="top-bar" class="top-bar panel-surface">
         <div class="brand-top-row">
-          <h1 class="brand-title">sf streets</h1>
+          <h1 class="brand-title">
+            <select id="select-city" class="brand-select" aria-label="Choose city">
+              <option value="sf">sf streets</option>
+              <option value="slc">slc streets</option>
+            </select>
+          </h1>
           <div class="header-actions">
             <button id="btn-record-gps" class="btn btn-sm" title="Record a live walk with phone GPS">
               <span id="gps-dot" class="gps-dot"></span>
@@ -77,7 +82,7 @@
         <div class="progress-summary">
           <div class="progress-headline-row">
             <span id="stat-overall-pct" class="progress-big-pct">0.0%</span>
-            <span id="stat-blocks-count" class="progress-sub-stats">0 / 15,168 blocks</span>
+            <span id="stat-blocks-count" class="progress-sub-stats">0 / 0 blocks</span>
           </div>
           <div class="progress-bar-track" aria-label="San Francisco street completion bar">
             <div id="bar-completed" class="progress-bar-fill-completed" style="width: 0%;"></div>
@@ -102,11 +107,11 @@
               id="input-street-search"
               type="search"
               class="input-control"
-              placeholder="Search 2,247 SF streets..."
+              placeholder="Search streets..."
               autocomplete="off"
             />
             <select id="select-neighborhood" class="select-control" aria-label="Filter by San Francisco neighborhood">
-              <option value="ALL">All SF</option>
+              <option value="ALL">All</option>
             </select>
           </div>
           <nav class="status-tabs" aria-label="Street completion status filter">
@@ -144,7 +149,7 @@
             <input id="chk-auto-post-summary" type="checkbox" checked />
             Auto-post progress summary to new walks
           </label>
-          <pre id="summary-preview" class="summary-preview">Sync a Strava walk in SF to preview its summary.</pre>
+          <pre id="summary-preview" class="summary-preview">Sync a Strava walk in this city to preview its summary.</pre>
           <div class="filter-row">
             <button id="btn-post-latest-summary" type="button" class="btn btn-sm" style="flex:1;">
               Post to Latest Walk
@@ -182,7 +187,7 @@
           </div>
           <label for="input-file-upload" class="dropzone-label" id="file-dropzone">
             <strong>Tap to choose activity files</strong>
-            <span>Every GPS trace snaps against all 15,168 SF blocks on your device.</span>
+            <span>GPS traces snap to every block of the selected city, right on your device.</span>
             <input id="input-file-upload" type="file" accept=".gpx,.tcx,.json" multiple style="display:none;" />
           </label>
         </div>

@@ -2,6 +2,30 @@
 
 const STORAGE_KEY_STATE = 'sf_streets_state_v1';
 const STORAGE_KEY_STRAVA = 'sf_streets_strava_cfg_v1';
+const STORAGE_KEY_CITY = 'sf_streets_active_city_v1';
+
+// Each city ships a data/<id>-streets.json of blocks; bbox is a cheap pre-filter for GPS points.
+const CITIES = {
+  sf: {
+    id: 'sf',
+    name: 'San Francisco',
+    short: 'SF',
+    data: './data/sf-streets.json?v=5',
+    center: [-122.436, 37.764],
+    zoom: 12.2,
+    bbox: [-122.53, 37.7, -122.35, 37.84]
+  },
+  slc: {
+    id: 'slc',
+    name: 'Salt Lake City',
+    short: 'SLC',
+    data: './data/slc-streets.json?v=1',
+    center: [-111.905, 40.755],
+    zoom: 11.6,
+    bbox: [-112.13, 40.68, -111.77, 40.86]
+  }
+};
+const DEFAULT_CITY = 'sf';
 const SNAP_RADIUS_METERS = 28;
 const GRID_CELL_DEG = 0.0025; // ~250m grid cells
 const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
@@ -9,6 +33,8 @@ const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
 const STRAVA_PROXY_URL = 'https://sf-streets-strava.strange-habits.workers.dev';
 
 const state = {
+  city: CITIES[DEFAULT_CITY],
+  manualByCity: {},      // cityId -> Set(blockId) marked by hand
   blocks: [],            // [{ id, s, f, t, n, c, checkpoints }]
   blockById: new Map(),
   streetsByName: new Map(), // name -> { name, neighborhoods: Set, blockIds: [] }
@@ -106,8 +132,9 @@ function accumulateHits(coords) {
   const touched = new Set();
   const denseCoords = interpolateLine(coords, 14);
   for (const [lng, lat] of denseCoords) {
-    // Quick bounding box filter for San Francisco
-    if (lng < -122.53 || lng > -122.35 || lat < 37.70 || lat > 37.84) continue;
+    // Quick bounding box filter for the active city
+    const [minLng, minLat, maxLng, maxLat] = state.city.bbox;
+    if (lng < minLng || lng > maxLng || lat < minLat || lat > maxLat) continue;
 
     const gx = Math.floor(lng / GRID_CELL_DEG);
     const gy = Math.floor(lat / GRID_CELL_DEG);
@@ -306,10 +333,19 @@ function parseGpxOrTcxText(xmlText, fileName) {
 
 /* ---------- Storage Persistence ---------- */
 
+function manualSetFor(cityId) {
+  if (!state.manualByCity[cityId]) state.manualByCity[cityId] = new Set();
+  return state.manualByCity[cityId];
+}
+
 function saveStateToStorage() {
   try {
+    const manualBlockIdsByCity = {};
+    for (const [cityId, set] of Object.entries(state.manualByCity)) {
+      manualBlockIdsByCity[cityId] = Array.from(set);
+    }
     const payload = {
-      manualBlockIds: Array.from(state.manualBlockIds),
+      manualBlockIdsByCity,
       walks: state.walks.map((w) => ({
         id: w.id,
         name: w.name,
@@ -317,7 +353,7 @@ function saveStateToStorage() {
         ts: w.ts,
         source: w.source,
         stravaId: w.stravaId,
-        summaryPosted: w.summaryPosted,
+        summaryPostedFor: w.summaryPostedFor,
         summaryPostedAt: w.summaryPostedAt,
         coords: w.coords
       }))
@@ -333,12 +369,21 @@ function loadStateFromStorage() {
     const raw = localStorage.getItem(STORAGE_KEY_STATE);
     if (!raw) return;
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.manualBlockIds)) {
-      state.manualBlockIds = new Set(parsed.manualBlockIds.map(String));
+    if (parsed.manualBlockIdsByCity) {
+      for (const [cityId, ids] of Object.entries(parsed.manualBlockIdsByCity)) {
+        state.manualByCity[cityId] = new Set((ids || []).map(String));
+      }
+    } else if (Array.isArray(parsed.manualBlockIds)) {
+      // Pre-multi-city format: everything was San Francisco.
+      state.manualByCity.sf = new Set(parsed.manualBlockIds.map(String));
     }
     if (Array.isArray(parsed.walks)) {
       // Demo walks were removed from the UI; drop any that were persisted earlier.
       state.walks = parsed.walks.filter((w) => !String(w.id || '').startsWith('sample-'));
+      for (const w of state.walks) {
+        if (w.summaryPosted && !w.summaryPostedFor) w.summaryPostedFor = { sf: true };
+        delete w.summaryPosted;
+      }
     }
   } catch (err) {
     console.warn('Could not restore state from localStorage:', err);
@@ -412,8 +457,8 @@ function initMap() {
   map = new maplibregl.Map({
     container: 'map-container',
     style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-    center: [-122.436, 37.764],
-    zoom: 12.2,
+    center: state.city.center,
+    zoom: state.city.zoom,
     minZoom: 10.5,
     maxZoom: 18,
     attributionControl: false
@@ -959,7 +1004,7 @@ function updateStravaUIState() {
     const summary = latest ? buildProgressSummary(latest) : null;
     preview.textContent = summary
       ? `${latest.name}\n\n${summary}`
-      : 'Sync a Strava walk in SF to preview its summary.';
+      : 'Sync a Strava walk in this city to preview its summary.';
   }
 }
 
@@ -969,7 +1014,7 @@ const MAX_SUMMARY_POSTS_PER_RUN = 15;
 const SUMMARY_FOOTER = 'strange-habits.com/sf-streets';
 // Matches a previously posted summary block so re-posting replaces instead of stacking.
 const SUMMARY_RE =
-  /[\d,]+ new blocks? walked\. \+[\d.]+%\s*\n\s*[\d,]+ of [\d,]+ sf blocks \([\d.]+%\)(?:\s*\n\s*strange-habits\.com\/sf-streets)?/gi;
+  /[\d,]+ new blocks? walked\. \+[\d.]+%\s*\n\s*[\d,]+ of [\d,]+ [a-z ]{1,16} blocks \([\d.]+%\)(?:\s*\n\s*strange-habits\.com\/sf-streets)?/gi;
 
 function stravaIdOf(walk) {
   if (walk.stravaId) return String(walk.stravaId);
@@ -990,7 +1035,7 @@ function buildProgressSummary(walk) {
   const totalPct = (s.cumulativeBlocks / total) * 100;
   return [
     `${n.toLocaleString()} new block${n === 1 ? '' : 's'} walked. +${deltaPct.toFixed(2)}%`,
-    `${s.cumulativeBlocks.toLocaleString()} of ${total.toLocaleString()} SF blocks (${totalPct.toFixed(1)}%)`,
+    `${s.cumulativeBlocks.toLocaleString()} of ${total.toLocaleString()} ${state.city.short} blocks (${totalPct.toFixed(1)}%)`,
     SUMMARY_FOOTER
   ].join('\n');
 }
@@ -1010,7 +1055,7 @@ function stravaWalksNewestFirst() {
 }
 
 function pendingSummaryWalks() {
-  return stravaWalksNewestFirst().filter((w) => !w.summaryPosted);
+  return stravaWalksNewestFirst().filter((w) => !(w.summaryPostedFor && w.summaryPostedFor[state.city.id]));
 }
 
 function latestStravaWalk() {
@@ -1050,7 +1095,7 @@ async function postSummaryToStrava(accessToken, walk) {
   if (putRes.status === 429) throw new Error('rate-limited');
   if (!putRes.ok) throw new Error(`PUT ${putRes.status}`);
 
-  walk.summaryPosted = true;
+  walk.summaryPostedFor = { ...(walk.summaryPostedFor || {}), [state.city.id]: true };
   walk.summaryPostedAt = new Date().toISOString();
 }
 
@@ -1190,7 +1235,6 @@ async function fetchStravaActivitiesWithToken(accessToken) {
             date: (act.start_date_local || '').slice(0, 10),
             ts: act.start_date || act.start_date_local || '',
             source: `Strava ${act.type || 'Walk'}`,
-            summaryPosted: false,
             coords
           });
           existingIds.add(walkId);
@@ -1208,7 +1252,11 @@ async function fetchStravaActivitiesWithToken(accessToken) {
       saveStateToStorage();
       refreshMapSources();
       updateDashboardStats();
-      showToast(`Synced ${newWalks.length} Strava walks (+${newlyMatched} new SF blocks)!`);
+      const elsewhere = otherCityWithWalks(newWalks);
+      showToast(
+        `Synced ${newWalks.length} Strava walks (+${newlyMatched} new ${state.city.short} blocks)!` +
+          (newlyMatched === 0 && elsewhere ? ` Some look like ${elsewhere.name} — switch city to see them.` : '')
+      );
 
       if (getStravaConfig().autoPostSummary !== false && hasStravaWriteScope()) {
         await postPendingStravaSummaries(accessToken, newWalks.map((w) => w.id));
@@ -1343,29 +1391,63 @@ function toggleLiveGpsRecording() {
 
 /* ---------- Bootstrapping & Event Listeners ---------- */
 
-async function loadInitialData() {
-  try {
-    const res = await fetch('./data/sf-streets.json?v=5');
-    const blocks = await res.json();
-    state.blocks = blocks;
+function inBbox(pt, bbox) {
+  return pt[0] >= bbox[0] && pt[0] <= bbox[2] && pt[1] >= bbox[1] && pt[1] <= bbox[3];
+}
 
-    const nhoodCounts = new Map();
-    for (const b of blocks) {
-      state.blockById.set(b.id, b);
+// First non-active city whose bbox contains any of these walks, if any.
+function otherCityWithWalks(walks) {
+  for (const city of Object.values(CITIES)) {
+    if (city.id === state.city.id) continue;
+    if (walks.some((w) => w.coords && w.coords.some((pt) => inBbox(pt, city.bbox)))) return city;
+  }
+  return null;
+}
 
-      let st = state.streetsByName.get(b.s);
-      if (!st) {
-        st = { name: b.s, neighborhoods: new Set(), blockIds: [] };
-        state.streetsByName.set(b.s, st);
-      }
-      st.neighborhoods.add(b.n);
-      st.blockIds.push(b.id);
+function applyCityLabels() {
+  const city = state.city;
+  const search = document.getElementById('input-street-search');
+  if (search) search.placeholder = `Search ${state.streetsByName.size.toLocaleString()} ${city.short} streets...`;
+  const citySel = document.getElementById('select-city');
+  if (citySel) citySel.value = city.id;
+  document.title = `${city.short.toLowerCase()} streets — walk every block in ${city.name.toLowerCase()}`;
+}
 
-      nhoodCounts.set(b.n, (nhoodCounts.get(b.n) || 0) + 1);
+async function loadCityData(city) {
+  const res = await fetch(city.data);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const blocks = await res.json();
+
+  state.city = city;
+  state.blocks = blocks;
+  state.blockById = new Map();
+  state.streetsByName = new Map();
+  state.manualBlockIds = manualSetFor(city.id);
+  state.selectedBlockId = null;
+  state.selectedStreetName = null;
+  state.highlightedStreets.clear();
+  state.filterNeighborhood = 'ALL';
+
+  const nhoodCounts = new Map();
+  for (const b of blocks) {
+    state.blockById.set(b.id, b);
+    let st = state.streetsByName.get(b.s);
+    if (!st) {
+      st = { name: b.s, neighborhoods: new Set(), blockIds: [] };
+      state.streetsByName.set(b.s, st);
     }
+    st.neighborhoods.add(b.n);
+    st.blockIds.push(b.id);
+    nhoodCounts.set(b.n, (nhoodCounts.get(b.n) || 0) + 1);
+  }
 
-    // Populate Neighborhood selector
-    const selectEl = document.getElementById('select-neighborhood');
+  const selectEl = document.getElementById('select-neighborhood');
+  if (selectEl) {
+    selectEl.innerHTML = '';
+    const all = document.createElement('option');
+    all.value = 'ALL';
+    all.textContent = `All ${city.short}`;
+    selectEl.appendChild(all);
     const sortedNhoods = Array.from(nhoodCounts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
     for (const [nhood, count] of sortedNhoods) {
       const opt = document.createElement('option');
@@ -1373,17 +1455,48 @@ async function loadInitialData() {
       opt.textContent = `${nhood} (${count})`;
       selectEl.appendChild(opt);
     }
+  }
 
-    indexBlocksInSpatialGrid();
+  indexBlocksInSpatialGrid();
+  recomputeAllWalkMatches();
+  applyCityLabels();
+  updateDashboardStats();
+  refreshMapSources();
+}
+
+async function switchCity(cityId) {
+  const city = CITIES[cityId];
+  if (!city || city.id === state.city.id) return;
+  showToast(`Loading ${city.name}...`);
+  try {
+    await loadCityData(city);
+    localStorage.setItem(STORAGE_KEY_CITY, city.id);
+    if (map) map.flyTo({ center: city.center, zoom: city.zoom, duration: 1200 });
+    showToast(`${city.name}: ${state.walkedBlockIds.size.toLocaleString()} of ${state.blocks.length.toLocaleString()} blocks walked.`);
+  } catch (err) {
+    showToast(`Could not load ${city.name}: ${err.message}`);
+  }
+}
+
+function initialCityId() {
+  const fromUrl = new URLSearchParams(window.location.search).get('city');
+  if (fromUrl && CITIES[fromUrl]) return fromUrl;
+  const saved = localStorage.getItem(STORAGE_KEY_CITY);
+  return saved && CITIES[saved] ? saved : DEFAULT_CITY;
+}
+
+async function loadInitialData() {
+  try {
     loadStateFromStorage();
-    recomputeAllWalkMatches();
-    updateDashboardStats();
-    refreshMapSources();
+    const city = CITIES[initialCityId()];
+    state.city = city;
+    await loadCityData(city);
+    localStorage.setItem(STORAGE_KEY_CITY, city.id);
     checkStravaOAuthCallback();
     checkUrlWalkHighlight();
   } catch (err) {
-    console.error('Failed to load SF street data:', err);
-    showToast('Error loading SF street network.');
+    console.error('Failed to load street data:', err);
+    showToast('Error loading the street network.');
   }
 }
 
@@ -1448,6 +1561,8 @@ async function startStravaOAuth({ ownKeys = false } = {}) {
 
 function wireEvents() {
   wireSheetGestures();
+
+  on('select-city', 'change', (e) => switchCity(e.target.value));
 
   on('input-street-search', 'input', (e) => {
     state.searchQuery = e.target.value;
@@ -1690,7 +1805,7 @@ async function handleUploadedFiles(fileList) {
     refreshMapSources();
     updateDashboardStats();
     closeSyncModal();
-    showToast(`Imported ${importedWalks.length} file(s) — ${state.walkedBlockIds.size} SF blocks matched!`);
+    showToast(`Imported ${importedWalks.length} file(s) — ${state.walkedBlockIds.size} ${state.city.short} blocks matched!`);
   } else {
     showToast('No GPS track points found in selected file(s).');
   }
@@ -1708,11 +1823,12 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=10');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=11');
       await reg.update();
     } catch {}
   }
 
+  state.city = CITIES[initialCityId()];
   initMap();
   wireEvents();
   loadInitialData();
