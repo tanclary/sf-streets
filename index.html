@@ -19,8 +19,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <script defer src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <link rel="stylesheet" href="./index.css?v=8" />
-  <script defer src="./app.js?v=8"></script>
+  <link rel="stylesheet" href="./index.css?v=9" />
+  <script defer src="./app.js?v=9"></script>
 </head>
 <body>
   <main class="app-shell">
@@ -153,14 +153,19 @@
           </div>
 
           <details id="strava-setup" class="setup-details">
-            <summary>Connection setup</summary>
+            <summary>Advanced: use your own Strava API app</summary>
             <p class="sync-section-desc">
-              Create a free API app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>
-              with Authorization Callback Domain <code>strange-habits.com</code>, then connect.
+              Only needed if the shared connector is full. Create a free API app at
+              <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>
+              with Authorization Callback Domain <code>strange-habits.com</code>.
             </p>
             <div class="form-grid">
               <input id="input-strava-client-id" type="text" class="input-control" placeholder="Client ID" />
               <input id="input-strava-client-secret" type="password" class="input-control" placeholder="Client Secret (stored on this device)" />
+            </div>
+            <div class="filter-row">
+              <button id="btn-strava-own-keys" type="button" class="btn btn-sm" style="flex:1;">Connect with my own keys</button>
+              <button id="btn-strava-disconnect" type="button" class="btn btn-sm" style="flex:1;">Disconnect Strava</button>
             </div>
             <div class="filter-row">
               <input id="input-strava-token" type="password" class="input-control" placeholder="Or paste an Access Token" />

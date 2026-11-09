@@ -1,0 +1,10 @@
+name = "sf-streets-strava"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://strange-habits.com,https://www.strange-habits.com,http://localhost:8415"
+
+# Secrets (never commit these):
+#   npx wrangler secret put STRAVA_CLIENT_ID
+#   npx wrangler secret put STRAVA_CLIENT_SECRET

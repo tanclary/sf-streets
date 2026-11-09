@@ -5,6 +5,8 @@ const STORAGE_KEY_STRAVA = 'sf_streets_strava_cfg_v1';
 const SNAP_RADIUS_METERS = 28;
 const GRID_CELL_DEG = 0.0025; // ~250m grid cells
 const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
+// Cloudflare Worker that holds the shared Strava app secret (see worker/). Empty = users bring their own keys.
+const STRAVA_PROXY_URL = '';
 
 const state = {
   blocks: [],            // [{ id, s, f, t, n, c, checkpoints }]
@@ -916,12 +918,12 @@ function updateStravaUIState() {
   const secInput = document.getElementById('input-strava-client-secret');
   const oauthBtn = document.getElementById('btn-strava-oauth');
   const setup = document.getElementById('strava-setup');
-  const connected = !!(cfg.refreshToken && cfg.clientId && cfg.clientSecret);
+  const connected = isStravaConnected(cfg);
   const canWrite = hasStravaWriteScope();
 
   if (cidInput && cfg.clientId && !cidInput.value) cidInput.value = cfg.clientId;
   if (secInput && cfg.clientSecret && !secInput.value) secInput.value = cfg.clientSecret;
-  if (setup && !connected) setup.open = true;
+  if (setup && !connected && !proxyEnabled()) setup.open = true;
 
   if (oauthBtn) {
     oauthBtn.textContent = !connected
@@ -937,12 +939,16 @@ function updateStravaUIState() {
 
   const writeStatus = document.getElementById('strava-write-status');
   if (writeStatus) {
+    const who = cfg.athlete && cfg.athlete.firstname ? ` as ${cfg.athlete.firstname}` : '';
     writeStatus.textContent = !connected
       ? 'not connected'
       : canWrite
-      ? 'connected ✓ · write access ✓'
-      : 'connected · tap grant write access';
+      ? `connected${who} ✓ · write access ✓`
+      : `connected${who} · tap grant write access`;
   }
+
+  const disconnectBtn = document.getElementById('btn-strava-disconnect');
+  if (disconnectBtn) disconnectBtn.style.display = connected ? '' : 'none';
 
   const pendingEl = document.getElementById('pending-summary-count');
   if (pendingEl) pendingEl.textContent = pendingSummaryWalks().length;
@@ -1019,7 +1025,7 @@ async function requireStravaToken() {
     showToast(`Strava auth error: ${err.message}`);
     return null;
   }
-  showToast('Connect Strava via OAuth first.');
+  showToast('Tap Connect Strava first.');
   return null;
 }
 
@@ -1091,6 +1097,38 @@ async function postPendingStravaSummaries(accessToken, onlyWalkIds = null) {
   return posted;
 }
 
+function proxyEnabled() {
+  return !!STRAVA_PROXY_URL;
+}
+
+function isStravaConnected(cfg = getStravaConfig()) {
+  if (!cfg.refreshToken) return false;
+  return cfg.mode === 'proxy' ? proxyEnabled() : !!(cfg.clientId && cfg.clientSecret);
+}
+
+// Exchanges an auth code or refresh token, via the Worker (shared app) or directly (own keys).
+async function stravaTokenRequest(cfg, params) {
+  let res;
+  if (cfg.mode === 'proxy') {
+    const path = params.grant_type === 'refresh_token' ? '/refresh' : '/exchange';
+    res = await fetch(`${STRAVA_PROXY_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(params)
+    });
+  } else {
+    res = await fetch('https://www.strava.com/api/v3/oauth/token', {
+      method: 'POST',
+      body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, ...params })
+    });
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.access_token) {
+    throw new Error(data.error || data.message || `token request failed (${res.status})`);
+  }
+  return data;
+}
+
 async function getValidStravaAccessToken() {
   const cfg = getStravaConfig();
   const nowSec = Math.floor(Date.now() / 1000);
@@ -1098,30 +1136,23 @@ async function getValidStravaAccessToken() {
   if (cfg.accessToken && cfg.expiresAt && cfg.expiresAt > nowSec + 120) {
     return cfg.accessToken;
   }
+  if (!isStravaConnected(cfg)) return null;
 
-  if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
-    const body = new URLSearchParams({
-      client_id: cfg.clientId,
-      client_secret: cfg.clientSecret,
-      grant_type: 'refresh_token',
-      refresh_token: cfg.refreshToken
-    });
-    const res = await fetch('https://www.strava.com/api/v3/oauth/token', {
-      method: 'POST',
-      body
-    });
-    if (!res.ok) throw new Error(`Token refresh failed (${res.status})`);
-    const data = await res.json();
-    if (data.access_token) {
-      saveStravaConfig({
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token || cfg.refreshToken,
-        expiresAt: data.expires_at
-      });
-      return data.access_token;
-    }
-  }
-  return null;
+  const data = await stravaTokenRequest(cfg, {
+    grant_type: 'refresh_token',
+    refresh_token: cfg.refreshToken
+  });
+  saveStravaConfig({
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || cfg.refreshToken,
+    expiresAt: data.expires_at
+  });
+  return data.access_token;
+}
+
+function disconnectStrava() {
+  saveStravaConfig({ accessToken: null, refreshToken: null, expiresAt: null, scope: '', athlete: null });
+  showToast('Strava disconnected on this device.');
 }
 
 async function fetchStravaActivitiesWithToken(accessToken) {
@@ -1195,9 +1226,8 @@ async function checkStravaOAuthCallback() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get('code');
   if (!code) {
-    // Auto-sync on launch if already connected via OAuth!
-    const cfg = getStravaConfig();
-    if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
+    // Auto-sync on launch if already connected.
+    if (isStravaConnected()) {
       try {
         const token = await getValidStravaAccessToken();
         if (token) await fetchStravaActivitiesWithToken(token);
@@ -1213,34 +1243,21 @@ async function checkStravaOAuthCallback() {
   window.history.replaceState({}, document.title, window.location.pathname);
 
   const cfg = getStravaConfig();
-  if (!cfg.clientId || !cfg.clientSecret) return;
+  if (cfg.mode !== 'proxy' && (!cfg.clientId || !cfg.clientSecret)) return;
 
   try {
     showToast('Linking Strava account...');
-    const body = new URLSearchParams({
-      client_id: cfg.clientId,
-      client_secret: cfg.clientSecret,
-      code,
-      grant_type: 'authorization_code'
+    const data = await stravaTokenRequest(cfg, { code, grant_type: 'authorization_code' });
+    saveStravaConfig({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: data.expires_at,
+      scope: grantedScope,
+      athlete: data.athlete || null
     });
-    const res = await fetch('https://www.strava.com/api/v3/oauth/token', {
-      method: 'POST',
-      body
-    });
-    const data = await res.json();
-    if (data.access_token) {
-      saveStravaConfig({
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresAt: data.expires_at,
-        scope: grantedScope
-      });
-      await fetchStravaActivitiesWithToken(data.access_token);
-    } else {
-      showToast(`Strava OAuth error: ${data.message || 'token exchange failed'}`);
-    }
+    await fetchStravaActivitiesWithToken(data.access_token);
   } catch (err) {
-    showToast(`OAuth error: ${err.message}`);
+    showToast(`Strava connect error: ${err.message}`);
   }
 }
 
@@ -1392,7 +1409,29 @@ function openStravaSetup() {
   if (setup) setup.open = true;
 }
 
-function startStravaOAuth() {
+function stravaAuthorizeUrl(clientId) {
+  const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+  return (
+    `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}` +
+    `&response_type=code&redirect_uri=${redirectUri}` +
+    `&approval_prompt=auto&scope=read,activity:read_all,activity:write`
+  );
+}
+
+async function startStravaOAuth({ ownKeys = false } = {}) {
+  if (proxyEnabled() && !ownKeys) {
+    try {
+      const res = await fetch(`${STRAVA_PROXY_URL}/config`);
+      const { client_id: clientId } = await res.json();
+      if (!clientId) throw new Error('missing client id');
+      saveStravaConfig({ mode: 'proxy' });
+      window.location.href = stravaAuthorizeUrl(clientId);
+    } catch (err) {
+      showToast(`Could not reach the Strava connector: ${err.message}`);
+    }
+    return;
+  }
+
   const cfg = getStravaConfig();
   const cidInput = document.getElementById('input-strava-client-id');
   const secInput = document.getElementById('input-strava-client-secret');
@@ -1403,12 +1442,8 @@ function startStravaOAuth() {
     showToast('Enter your Strava Client ID & Client Secret first.');
     return;
   }
-  saveStravaConfig({ clientId, clientSecret });
-  const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
-  window.location.href =
-    `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}` +
-    `&response_type=code&redirect_uri=${redirectUri}` +
-    `&approval_prompt=auto&scope=read,activity:read_all,activity:write`;
+  saveStravaConfig({ mode: 'byo', clientId, clientSecret });
+  window.location.href = stravaAuthorizeUrl(clientId);
 }
 
 function wireEvents() {
@@ -1534,7 +1569,9 @@ function wireEvents() {
     await fetchStravaActivitiesWithToken(manualToken);
   });
 
-  on('btn-strava-oauth', 'click', startStravaOAuth);
+  on('btn-strava-oauth', 'click', () => startStravaOAuth());
+  on('btn-strava-own-keys', 'click', () => startStravaOAuth({ ownKeys: true }));
+  on('btn-strava-disconnect', 'click', disconnectStrava);
 
   on('chk-auto-post-summary', 'change', (e) => {
     saveStravaConfig({ autoPostSummary: e.target.checked });
@@ -1671,7 +1708,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=8');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=9');
       await reg.update();
     } catch {}
   }
