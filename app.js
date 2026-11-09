@@ -2,11 +2,9 @@
 
 const STORAGE_KEY_STATE = 'sf_streets_state_v1';
 const STORAGE_KEY_STRAVA = 'sf_streets_strava_cfg_v1';
-const STORAGE_KEY_WALKCLUB_URL = 'sf_streets_walkclub_url_v1';
-// Default personal Gmail Apps Script Web App URL (can be hardcoded here once deployed or set in UI)
-const DEFAULT_WALK_CLUB_SCRIPT_URL = '';
 const SNAP_RADIUS_METERS = 28;
 const GRID_CELL_DEG = 0.0025; // ~250m grid cells
+const MOBILE_QUERY = window.matchMedia('(max-width: 768px)');
 
 const state = {
   blocks: [],            // [{ id, s, f, t, n, c, checkpoints }]
@@ -20,14 +18,6 @@ const state = {
   selectedBlockId: null,
   selectedStreetName: null,
   highlightedStreets: new Set(),
-  upcomingWalk: {
-    title: 'Walk #01: Haight & Buena Vista Loops',
-    dateTime: 'Saturday · 10:30 AM',
-    meetupSpot: 'Duboce Park Cafe',
-    neighborhood: 'Haight Ashbury',
-    targetStreets: ['Haight St', 'Waller St', 'Cole St', 'Belvedere St', 'Ashbury St'],
-    notes: 'Coffee at Duboce Park, then knocking out blocks around Haight & Buena Vista.'
-  },
   filterStatus: 'all',
   filterNeighborhood: 'ALL',
   searchQuery: '',
@@ -345,7 +335,8 @@ function loadStateFromStorage() {
       state.manualBlockIds = new Set(parsed.manualBlockIds.map(String));
     }
     if (Array.isArray(parsed.walks)) {
-      state.walks = parsed.walks;
+      // Demo walks were removed from the UI; drop any that were persisted earlier.
+      state.walks = parsed.walks.filter((w) => !String(w.id || '').startsWith('sample-'));
     }
   } catch (err) {
     console.warn('Could not restore state from localStorage:', err);
@@ -516,6 +507,11 @@ function initMap() {
       selectBlock(props.id, false);
     });
 
+    // Tapping the map on mobile tucks the street sheet away so the map is visible.
+    map.on('click', () => {
+      if (isMobile()) setSheetCollapsed(true);
+    });
+
     map.on('mouseenter', 'sf-blocks-hit', () => {
       map.getCanvas().style.cursor = 'pointer';
     });
@@ -675,6 +671,7 @@ function renderStreetList(streetAggs) {
 
     btn.addEventListener('click', () => {
       selectStreetByName(st.name, st.blockIds);
+      if (isMobile()) setSheetCollapsed(true);
     });
     frag.appendChild(btn);
   }
@@ -715,7 +712,7 @@ function selectStreetByName(streetName, blockIds) {
         bounds.extend(pt);
       }
     }
-    map.fitBounds(bounds, { padding: 80, maxZoom: 16, duration: 850 });
+    map.fitBounds(bounds, { padding: mapFitPadding(), maxZoom: 16, duration: 850 });
   }
 }
 
@@ -746,7 +743,7 @@ function highlightStreetListOnMap(streetNames, optionalNeighborhood) {
       }
     }
     if (count > 0) {
-      map.fitBounds(bounds, { padding: 70, maxZoom: 15.5, duration: 900 });
+      map.fitBounds(bounds, { padding: mapFitPadding(), maxZoom: 15.5, duration: 900 });
     }
   }
 }
@@ -798,6 +795,91 @@ function showToast(msg) {
   }, 4200);
 }
 
+/* ---------- Mobile Bottom Sheet ---------- */
+
+function isMobile() {
+  return MOBILE_QUERY.matches;
+}
+
+function setSheetCollapsed(collapsed) {
+  const drawer = document.getElementById('sidebar-drawer');
+  if (!drawer) return;
+  drawer.classList.toggle('collapsed', collapsed);
+  if (collapsed && document.activeElement && drawer.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
+}
+
+function toggleSheet() {
+  const drawer = document.getElementById('sidebar-drawer');
+  if (drawer) setSheetCollapsed(!drawer.classList.contains('collapsed'));
+}
+
+// Keeps the overlay offset and the collapsed sheet height in sync with real element sizes.
+function measureLayoutVars() {
+  const root = document.documentElement.style;
+  const topBar = document.getElementById('top-bar');
+  const handle = document.getElementById('btn-mobile-sheet-toggle');
+  const controls = document.getElementById('controls-section');
+  if (topBar) root.setProperty('--topbar-h', `${topBar.offsetHeight}px`);
+  if (handle && controls && isMobile()) {
+    root.setProperty('--sheet-peek', `${handle.offsetHeight + controls.offsetHeight + 2}px`);
+  }
+}
+
+// Padding that keeps fitted geometry clear of the floating UI on either layout.
+function mapFitPadding() {
+  const overlay = document.querySelector('.map-overlay-top-right');
+  const overlayBottom = overlay ? overlay.getBoundingClientRect().bottom : 0;
+  if (isMobile()) {
+    const peek = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sheet-peek')) || 128;
+    return { top: overlayBottom + 24, bottom: peek + 24, left: 24, right: 24 };
+  }
+  const column = document.querySelector('.side-column');
+  const columnRight = column ? column.getBoundingClientRect().right : 0;
+  return { top: Math.max(60, overlayBottom + 24), bottom: 60, left: columnRight + 40, right: 60 };
+}
+
+function wireSheetGestures() {
+  const handle = document.getElementById('btn-mobile-sheet-toggle');
+  if (!handle) return;
+  let startY = null;
+
+  handle.addEventListener('click', toggleSheet);
+  handle.addEventListener('touchstart', (e) => {
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+  handle.addEventListener('touchmove', (e) => {
+    if (startY === null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy < -24) {
+      setSheetCollapsed(false);
+      startY = null;
+    } else if (dy > 24) {
+      setSheetCollapsed(true);
+      startY = null;
+    }
+  }, { passive: true });
+  handle.addEventListener('touchend', () => {
+    startY = null;
+  });
+
+  const search = document.getElementById('input-street-search');
+  if (search) {
+    search.addEventListener('focus', () => {
+      if (isMobile()) setSheetCollapsed(false);
+    });
+  }
+
+  const ro = 'ResizeObserver' in window ? new ResizeObserver(measureLayoutVars) : null;
+  const topBar = document.getElementById('top-bar');
+  const controls = document.getElementById('controls-section');
+  if (ro && topBar) ro.observe(topBar);
+  if (ro && controls) ro.observe(controls);
+  window.addEventListener('resize', measureLayoutVars);
+  measureLayoutVars();
+}
+
 /* ---------- Strava API Sync (Auto-Refresh, Access Token & OAuth) ---------- */
 
 function getStravaConfig() {
@@ -819,20 +901,22 @@ function updateStravaUIState() {
   const cfg = getStravaConfig();
   const cidInput = document.getElementById('input-strava-client-id');
   const secInput = document.getElementById('input-strava-client-secret');
-  const syncBtn = document.getElementById('btn-open-sync-modal');
   const oauthBtn = document.getElementById('btn-strava-oauth');
+  const setup = document.getElementById('strava-setup');
   const connected = !!(cfg.refreshToken && cfg.clientId && cfg.clientSecret);
+  const canWrite = hasStravaWriteScope();
 
   if (cidInput && cfg.clientId && !cidInput.value) cidInput.value = cfg.clientId;
   if (secInput && cfg.clientSecret && !secInput.value) secInput.value = cfg.clientSecret;
+  if (setup && !connected) setup.open = true;
 
-  if (connected) {
-    if (syncBtn) syncBtn.textContent = '↻ Sync Strava';
-    if (oauthBtn) {
-      oauthBtn.textContent = hasStravaWriteScope()
-        ? 'Reconnect Strava OAuth (Connected ✓)'
-        : 'Reconnect Strava OAuth (grant write access)';
-    }
+  if (oauthBtn) {
+    oauthBtn.textContent = !connected
+      ? 'Connect Strava'
+      : canWrite
+      ? 'Reconnect Strava'
+      : 'Grant Write Access';
+    oauthBtn.classList.toggle('btn-primary', connected && !canWrite);
   }
 
   const chk = document.getElementById('chk-auto-post-summary');
@@ -841,10 +925,10 @@ function updateStravaUIState() {
   const writeStatus = document.getElementById('strava-write-status');
   if (writeStatus) {
     writeStatus.textContent = !connected
-      ? 'connect strava first'
-      : hasStravaWriteScope()
-      ? 'write access ✓'
-      : 'reconnect to grant write access';
+      ? 'not connected'
+      : canWrite
+      ? 'connected ✓ · write access ✓'
+      : 'connected · tap grant write access';
   }
 
   const pendingEl = document.getElementById('pending-summary-count');
@@ -1157,7 +1241,7 @@ function toggleLiveGpsRecording() {
     navigator.geolocation.clearWatch(state.gpsWatchId);
     state.gpsWatchId = null;
     btnLabel.textContent = 'Live GPS';
-    dot.style.background = '#ee5630';
+    dot.classList.remove('recording');
     saveStateToStorage();
     const live = state.activeLiveWalk;
     const gained = live && live.stats ? live.stats.newBlockIds.length : 0;
@@ -1192,7 +1276,7 @@ function toggleLiveGpsRecording() {
   state.activeLiveWalk = liveWalk;
 
   btnLabel.textContent = 'Stop GPS';
-  dot.style.background = '#24c278';
+  dot.classList.add('recording');
   showToast('Recording live GPS walk — walk down any SF block!');
 
   state.gpsWatchId = navigator.geolocation.watchPosition(
@@ -1231,7 +1315,7 @@ function toggleLiveGpsRecording() {
 
 async function loadInitialData() {
   try {
-    const res = await fetch('./data/sf-streets.json?v=4');
+    const res = await fetch('./data/sf-streets.json?v=5');
     const blocks = await res.json();
     state.blocks = blocks;
 
@@ -1267,59 +1351,66 @@ async function loadInitialData() {
     refreshMapSources();
     checkStravaOAuthCallback();
     checkUrlWalkHighlight();
-    loadUpcomingWalkFromSheet();
   } catch (err) {
     console.error('Failed to load SF street data:', err);
     showToast('Error loading SF street network.');
   }
 }
 
-async function loadSampleWalks() {
-  try {
-    const res = await fetch('./data/sample-walks.json');
-    const samples = await res.json();
-    const existingIds = new Set(state.walks.map((w) => w.id));
-    let added = 0;
-    for (const s of samples) {
-      if (!existingIds.has(s.id)) {
-        state.walks.push(s);
-        added++;
-      }
-    }
-    recomputeAllWalkMatches();
-    saveStateToStorage();
-    refreshMapSources();
-    updateDashboardStats();
-    document.getElementById('sync-modal-backdrop').classList.add('hidden');
-    showToast(
-      added > 0
-        ? `Loaded 5 sample SF walks (${state.walkedBlockIds.size} blocks snapped)!`
-        : 'Sample SF walks already loaded.'
-    );
-  } catch (err) {
-    showToast('Could not load sample SF walks.');
+function on(id, event, handler, options) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener(event, handler, options);
+  return el;
+}
+
+function openSyncModal() {
+  const modal = document.getElementById('sync-modal-backdrop');
+  if (modal) modal.classList.remove('hidden');
+  updateStravaUIState();
+}
+
+function closeSyncModal() {
+  const modal = document.getElementById('sync-modal-backdrop');
+  if (modal) modal.classList.add('hidden');
+}
+
+function openStravaSetup() {
+  const setup = document.getElementById('strava-setup');
+  if (setup) setup.open = true;
+}
+
+function startStravaOAuth() {
+  const cfg = getStravaConfig();
+  const cidInput = document.getElementById('input-strava-client-id');
+  const secInput = document.getElementById('input-strava-client-secret');
+  const clientId = ((cidInput && cidInput.value) || cfg.clientId || '').trim();
+  const clientSecret = ((secInput && secInput.value) || cfg.clientSecret || '').trim();
+  if (!clientId || !clientSecret) {
+    openStravaSetup();
+    showToast('Enter your Strava Client ID & Client Secret first.');
+    return;
   }
+  saveStravaConfig({ clientId, clientSecret });
+  const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
+  window.location.href =
+    `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}` +
+    `&response_type=code&redirect_uri=${redirectUri}` +
+    `&approval_prompt=auto&scope=read,activity:read_all,activity:write`;
 }
 
 function wireEvents() {
-  // Mobile bottom sheet toggle
-  document.getElementById('btn-mobile-sheet-toggle').addEventListener('click', () => {
-    document.getElementById('sidebar-drawer').classList.toggle('minimized');
-  });
+  wireSheetGestures();
 
-  // Search input
-  document.getElementById('input-street-search').addEventListener('input', (e) => {
+  on('input-street-search', 'input', (e) => {
     state.searchQuery = e.target.value;
     updateDashboardStats();
   });
 
-  // Neighborhood filter
-  document.getElementById('select-neighborhood').addEventListener('change', (e) => {
+  on('select-neighborhood', 'change', (e) => {
     state.filterNeighborhood = e.target.value;
     refreshMapSources();
     updateDashboardStats();
 
-    // Fit map to selected neighborhood blocks
     if (map && state.filterNeighborhood !== 'ALL') {
       const bounds = new maplibregl.LngLatBounds();
       let count = 0;
@@ -1330,52 +1421,32 @@ function wireEvents() {
         }
       }
       if (count > 0) {
-        map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 800 });
+        map.fitBounds(bounds, { padding: mapFitPadding(), maxZoom: 15, duration: 800 });
       }
+      if (isMobile()) setSheetCollapsed(true);
     }
   });
 
-  // Status filter tabs
   document.querySelectorAll('.status-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.status-tab').forEach((t) => t.classList.remove('active'));
       tab.classList.add('active');
       state.filterStatus = tab.dataset.filter;
       updateDashboardStats();
+      if (isMobile()) setSheetCollapsed(false);
     });
   });
 
-  // Quick action buttons
-  document.getElementById('btn-load-sample-walks').addEventListener('click', loadSampleWalks);
-  document.getElementById('btn-load-samples-from-modal').addEventListener('click', loadSampleWalks);
-
-  document.getElementById('btn-toggle-traces').addEventListener('click', (e) => {
-    state.showTraces = !state.showTraces;
-    e.currentTarget.textContent = state.showTraces ? 'Hide GPS Traces' : 'Show GPS Traces';
-    refreshMapSources();
-  });
-
-  document.getElementById('btn-reset-progress').addEventListener('click', () => {
-    state.walks = [];
-    state.manualBlockIds.clear();
-    state.walkedBlockIds.clear();
-    state.selectedBlockId = null;
-    state.selectedStreetName = null;
-    saveStateToStorage();
-    refreshMapSources();
-    updateDashboardStats();
-    showToast('Reset all walks and street progress.');
-  });
-
   // Inspector actions
-  document.getElementById('btn-close-inspector').addEventListener('click', () => {
+  on('btn-close-inspector', 'click', () => {
     state.selectedBlockId = null;
     state.selectedStreetName = null;
+    state.highlightedStreets.clear();
     refreshMapSources();
     updateInspectorUI();
   });
 
-  document.getElementById('btn-toggle-block-walked').addEventListener('click', () => {
+  on('btn-toggle-block-walked', 'click', () => {
     const bid = state.selectedBlockId;
     if (!bid) return;
     if (state.walkedBlockIds.has(bid)) {
@@ -1390,101 +1461,83 @@ function wireEvents() {
     updateDashboardStats();
   });
 
-  document.getElementById('btn-focus-full-street').addEventListener('click', () => {
+  on('btn-focus-full-street', 'click', () => {
     const b = state.selectedBlockId ? state.blockById.get(state.selectedBlockId) : null;
     if (!b) return;
     const info = state.streetsByName.get(b.s);
-    if (info) {
-      selectStreetByName(b.s, info.blockIds);
-    }
+    if (info) selectStreetByName(b.s, info.blockIds);
   });
 
-  // Live GPS button
-  document.getElementById('btn-record-gps').addEventListener('click', toggleLiveGpsRecording);
+  on('btn-record-gps', 'click', toggleLiveGpsRecording);
 
-  // Sync modal open/close
-  const modal = document.getElementById('sync-modal-backdrop');
-  document.getElementById('btn-open-sync-modal').addEventListener('click', () => {
-    modal.classList.remove('hidden');
-  });
-  document.getElementById('btn-close-sync-modal').addEventListener('click', () => {
-    modal.classList.add('hidden');
-  });
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) modal.classList.add('hidden');
+  // Sync modal
+  on('btn-open-sync-modal', 'click', openSyncModal);
+  on('btn-close-sync-modal', 'click', closeSyncModal);
+  on('sync-modal-backdrop', 'click', (e) => {
+    if (e.target.id === 'sync-modal-backdrop') closeSyncModal();
   });
 
-  // File upload (.gpx, .tcx, .json)
-  const fileInput = document.getElementById('input-file-upload');
-  fileInput.addEventListener('change', async (e) => {
+  // File import (.gpx, .tcx, .json)
+  on('input-file-upload', 'change', async (e) => {
     await handleUploadedFiles(e.target.files);
-    fileInput.value = '';
+    e.target.value = '';
   });
 
   const dropzone = document.getElementById('file-dropzone');
-  dropzone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropzone.style.borderColor = 'var(--accent-orange)';
-  });
-  dropzone.addEventListener('dragleave', () => {
-    dropzone.style.borderColor = '';
-  });
-  dropzone.addEventListener('drop', async (e) => {
-    e.preventDefault();
-    dropzone.style.borderColor = '';
-    if (e.dataTransfer && e.dataTransfer.files) {
-      await handleUploadedFiles(e.dataTransfer.files);
-    }
-  });
+  if (dropzone) {
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = 'var(--accent-orange)';
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.style.borderColor = '';
+    });
+    dropzone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '';
+      if (e.dataTransfer && e.dataTransfer.files) {
+        await handleUploadedFiles(e.dataTransfer.files);
+      }
+    });
+  }
 
-  // Strava Access Token or saved Refresh Token sync
-  document.getElementById('btn-sync-strava-token').addEventListener('click', async () => {
-    const manualToken = document.getElementById('input-strava-token').value.trim();
-    if (manualToken) {
-      await fetchStravaActivitiesWithToken(manualToken);
+  // Strava
+  on('btn-sync-now', 'click', async () => {
+    const token = await requireStravaToken();
+    if (!token) {
+      openStravaSetup();
       return;
     }
-    const autoToken = await getValidStravaAccessToken();
-    if (autoToken) {
-      await fetchStravaActivitiesWithToken(autoToken);
-      return;
-    }
-    showToast('Connect via Strava OAuth below (one-time setup) or paste an Access Token.');
+    await fetchStravaActivitiesWithToken(token);
   });
 
-  // Strava OAuth redirect
-  document.getElementById('btn-strava-oauth').addEventListener('click', () => {
-    const clientId = document.getElementById('input-strava-client-id').value.trim();
-    const clientSecret = document.getElementById('input-strava-client-secret').value.trim();
-    if (!clientId || !clientSecret) {
-      showToast('Enter your Strava Client ID & Client Secret first.');
+  on('btn-sync-strava-token', 'click', async () => {
+    const input = document.getElementById('input-strava-token');
+    const manualToken = input ? input.value.trim() : '';
+    if (!manualToken) {
+      showToast('Paste an Access Token, or use Connect Strava above.');
       return;
     }
-    saveStravaConfig({ clientId, clientSecret });
-    const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname);
-    const authUrl =
-      `https://www.strava.com/oauth/authorize?client_id=${encodeURIComponent(clientId)}` +
-      `&response_type=code&redirect_uri=${redirectUri}` +
-      `&approval_prompt=auto&scope=read,activity:read_all,activity:write`;
-    window.location.href = authUrl;
+    await fetchStravaActivitiesWithToken(manualToken);
   });
 
-  // Strava description progress summaries
-  document.getElementById('chk-auto-post-summary').addEventListener('change', (e) => {
+  on('btn-strava-oauth', 'click', startStravaOAuth);
+
+  on('chk-auto-post-summary', 'change', (e) => {
     saveStravaConfig({ autoPostSummary: e.target.checked });
     if (e.target.checked && getStravaConfig().refreshToken && !hasStravaWriteScope()) {
-      showToast('Tap "Reconnect Strava OAuth" once to grant write access.');
+      showToast('Tap "Grant Write Access" once so summaries can be posted.');
     }
   });
 
-  document.getElementById('btn-post-latest-summary').addEventListener('click', async () => {
+  on('btn-post-latest-summary', 'click', async () => {
     const latest = latestStravaWalk();
     if (!latest) {
       showToast('No synced Strava walks in SF yet.');
       return;
     }
     if (!hasStravaWriteScope()) {
-      showToast('Reconnect Strava OAuth once to grant write access.');
+      showToast('Tap "Grant Write Access" once first.');
       return;
     }
     const token = await requireStravaToken();
@@ -1499,7 +1552,7 @@ function wireEvents() {
     }
   });
 
-  document.getElementById('btn-post-pending-summaries').addEventListener('click', async () => {
+  on('btn-post-pending-summaries', 'click', async () => {
     if (pendingSummaryWalks().length === 0) {
       showToast('Every synced SF walk already has a summary.');
       return;
@@ -1509,8 +1562,7 @@ function wireEvents() {
     await postPendingStravaSummaries(token);
   });
 
-  // Export backup JSON
-  document.getElementById('btn-export-backup').addEventListener('click', () => {
+  on('btn-export-backup', 'click', () => {
     const data = {
       exportedAt: new Date().toISOString(),
       walkedBlockCount: state.walkedBlockIds.size,
@@ -1525,119 +1577,6 @@ function wireEvents() {
     a.click();
     URL.revokeObjectURL(url);
   });
-
-  // Walk Club / Mailing List Modal
-  const walkModal = document.getElementById('walkclub-modal-backdrop');
-  const scriptUrlInput = document.getElementById('input-apps-script-url');
-  if (scriptUrlInput) {
-    scriptUrlInput.value = getWalkClubScriptUrl();
-  }
-
-  document.getElementById('btn-open-walkclub-modal').addEventListener('click', () => {
-    renderUpcomingWalkCard();
-    walkModal.classList.remove('hidden');
-  });
-  document.getElementById('btn-close-walkclub-modal').addEventListener('click', () => {
-    walkModal.classList.add('hidden');
-  });
-  walkModal.addEventListener('click', (e) => {
-    if (e.target === walkModal) walkModal.classList.add('hidden');
-  });
-
-  document.getElementById('btn-preview-upcoming-route').addEventListener('click', () => {
-    walkModal.classList.add('hidden');
-    highlightStreetListOnMap(
-      state.upcomingWalk.targetStreets,
-      state.upcomingWalk.neighborhood
-    );
-    showToast(`Highlighted ${state.upcomingWalk.targetStreets.length} target streets on map!`);
-  });
-
-  document.getElementById('btn-copy-walk-link').addEventListener('click', async () => {
-    const base = window.location.origin + window.location.pathname;
-    const url =
-      `${base}?streets=${encodeURIComponent(state.upcomingWalk.targetStreets.join(','))}` +
-      (state.upcomingWalk.neighborhood
-        ? `&nhood=${encodeURIComponent(state.upcomingWalk.neighborhood)}`
-        : '');
-    try {
-      await navigator.clipboard.writeText(url);
-      showToast('Copied shareable walk route link!');
-    } catch {
-      showToast(url);
-    }
-  });
-
-  document.getElementById('btn-save-apps-script-url').addEventListener('click', () => {
-    const val = document.getElementById('input-apps-script-url').value.trim();
-    localStorage.setItem(STORAGE_KEY_WALKCLUB_URL, val);
-    showToast('Saved personal Gmail Apps Script URL!');
-    loadUpcomingWalkFromSheet();
-  });
-
-  document.getElementById('form-walkclub-subscribe').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = document.getElementById('input-sub-email').value.trim();
-    const name = document.getElementById('input-sub-name').value.trim();
-    const neighborhood = document.getElementById('input-sub-nhood').value.trim();
-    const scriptUrl = getWalkClubScriptUrl();
-
-    if (!scriptUrl) {
-      showToast('Set your personal Gmail Apps Script Web App URL under Organizer Config first!');
-      return;
-    }
-
-    const submitBtn = document.getElementById('btn-submit-subscribe');
-    submitBtn.disabled = true;
-    submitBtn.textContent = 'Joining...';
-
-    try {
-      await fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ email, name, neighborhood })
-      });
-      document.getElementById('input-sub-email').value = '';
-      showToast('Added to the SF Walk Club mailing list!');
-    } catch (err) {
-      showToast(`Could not subscribe: ${err.message}`);
-    } finally {
-      submitBtn.disabled = false;
-      submitBtn.textContent = 'Join List';
-    }
-  });
-}
-
-function getWalkClubScriptUrl() {
-  return localStorage.getItem(STORAGE_KEY_WALKCLUB_URL) || DEFAULT_WALK_CLUB_SCRIPT_URL;
-}
-
-function renderUpcomingWalkCard() {
-  const w = state.upcomingWalk;
-  if (!w) return;
-  document.getElementById('upcoming-walk-title').textContent = w.title;
-  document.getElementById('upcoming-walk-date').textContent = w.dateTime;
-  document.getElementById('upcoming-walk-meetup').textContent = w.meetupSpot;
-  document.getElementById('upcoming-walk-nhood').textContent = w.neighborhood;
-  document.getElementById('upcoming-walk-notes').textContent =
-    `${w.notes} (Targets: ${w.targetStreets.join(', ')})`;
-}
-
-async function loadUpcomingWalkFromSheet() {
-  renderUpcomingWalkCard();
-  const scriptUrl = getWalkClubScriptUrl();
-  if (!scriptUrl) return;
-  try {
-    const res = await fetch(scriptUrl);
-    const data = await res.json();
-    if (data && data.upcomingWalk && data.upcomingWalk.title) {
-      state.upcomingWalk = data.upcomingWalk;
-      renderUpcomingWalkCard();
-    }
-  } catch (err) {
-    console.warn('Could not fetch upcoming walk from Apps Script:', err);
-  }
 }
 
 function checkUrlWalkHighlight() {
@@ -1700,7 +1639,7 @@ async function handleUploadedFiles(fileList) {
     saveStateToStorage();
     refreshMapSources();
     updateDashboardStats();
-    document.getElementById('sync-modal-backdrop').classList.add('hidden');
+    closeSyncModal();
     showToast(`Imported ${importedWalks.length} file(s) — ${state.walkedBlockIds.size} SF blocks matched!`);
   } else {
     showToast('No GPS track points found in selected file(s).');
@@ -1719,7 +1658,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=6');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=7');
       await reg.update();
     } catch {}
   }

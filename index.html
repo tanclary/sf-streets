@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>sf streets // strange habits — walk every block in san francisco</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>sf streets — walk every block in san francisco</title>
   <meta name="description" content="Track your progress walking every street and block in San Francisco using Strava, Garmin GPX files, or live phone GPS." />
   <meta name="theme-color" content="#15181e" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -19,15 +19,15 @@
 
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <script defer src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <link rel="stylesheet" href="./index.css?v=6" />
-  <script defer src="./app.js?v=6"></script>
+  <link rel="stylesheet" href="./index.css?v=7" />
+  <script defer src="./app.js?v=7"></script>
 </head>
 <body>
   <main class="app-shell">
     <!-- Full-screen MapLibre WebGL Map -->
     <div id="map-container" aria-label="San Francisco Street Completion Map"></div>
 
-    <!-- Top-Right Legend & Selected Block Inspector -->
+    <!-- Legend & Selected Block Inspector (floats over the map) -->
     <div class="map-overlay-top-right">
       <div class="map-legend-pill panel-surface" id="map-legend">
         <span class="legend-item">
@@ -60,27 +60,17 @@
       </section>
     </div>
 
-    <!-- Sidebar / Mobile Drawer -->
-    <aside id="sidebar-drawer" class="sidebar-panel panel-surface">
-      <div id="btn-mobile-sheet-toggle" class="mobile-sheet-toggle" role="button" tabindex="0" aria-label="Toggle street drawer">
-        <div class="sheet-grab-bar"></div>
-      </div>
-
-      <header class="brand-header">
+    <!-- Left column on desktop; splits into a top bar + bottom sheet on mobile -->
+    <div class="side-column">
+      <header id="top-bar" class="top-bar panel-surface">
         <div class="brand-top-row">
-          <div class="brand-title-group">
-            <h1 class="brand-title">sf streets</h1>
-            <span class="brand-tag">// 415 log</span>
-          </div>
+          <h1 class="brand-title">sf streets</h1>
           <div class="header-actions">
-            <button id="btn-open-walkclub-modal" class="btn btn-sm" title="Upcoming walk & email list">
-              Walk Club
-            </button>
-            <button id="btn-record-gps" class="btn btn-sm" title="Record live walk using phone GPS">
-              <span id="gps-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ee5630;"></span>
+            <button id="btn-record-gps" class="btn btn-sm" title="Record a live walk with phone GPS">
+              <span id="gps-dot" class="gps-dot"></span>
               <span id="gps-btn-label">Live GPS</span>
             </button>
-            <button id="btn-open-sync-modal" class="btn btn-primary btn-sm">Sync Strava / GPX</button>
+            <button id="btn-open-sync-modal" class="btn btn-primary btn-sm" title="Sync Strava, import GPX, post progress summaries">Sync</button>
           </div>
         </div>
 
@@ -99,190 +89,107 @@
             <span><strong id="stat-walks-count">0</strong> walks</span>
           </div>
         </div>
-
-        <div class="quick-actions-row">
-          <button id="btn-load-sample-walks" class="btn btn-sm">Try 5 Sample SF Walks</button>
-          <button id="btn-toggle-traces" class="btn btn-sm">Hide GPS Traces</button>
-          <button id="btn-reset-progress" class="btn btn-sm" title="Clear synced walks and manual blocks">Reset</button>
-        </div>
       </header>
 
-      <section class="controls-section" aria-label="Filter streets and neighborhoods">
-        <div class="filter-row">
-          <input
-            id="input-street-search"
-            type="search"
-            class="input-control"
-            placeholder="Search 2,247 SF streets..."
-            autocomplete="off"
-          />
-          <select id="select-neighborhood" class="select-control" aria-label="Filter by San Francisco neighborhood">
-            <option value="ALL">All SF (45 nhoods)</option>
-          </select>
-        </div>
-        <nav class="status-tabs" aria-label="Street completion status filter">
-          <button id="tab-all" class="status-tab active" data-filter="all">All</button>
-          <button id="tab-partial" class="status-tab" data-filter="partial">In Progress</button>
-          <button id="tab-done" class="status-tab" data-filter="done">Completed</button>
-          <button id="tab-todo" class="status-tab" data-filter="todo">Unwalked</button>
-        </nav>
-      </section>
+      <aside id="sidebar-drawer" class="sidebar-panel panel-surface collapsed">
+        <button id="btn-mobile-sheet-toggle" class="mobile-sheet-toggle" type="button" aria-label="Expand or collapse street list">
+          <span class="sheet-grab-bar"></span>
+        </button>
 
-      <div id="street-list" class="street-list-container" role="list"></div>
-    </aside>
+        <section id="controls-section" class="controls-section" aria-label="Filter streets and neighborhoods">
+          <div class="filter-row">
+            <input
+              id="input-street-search"
+              type="search"
+              class="input-control"
+              placeholder="Search 2,247 SF streets..."
+              autocomplete="off"
+            />
+            <select id="select-neighborhood" class="select-control" aria-label="Filter by San Francisco neighborhood">
+              <option value="ALL">All SF</option>
+            </select>
+          </div>
+          <nav class="status-tabs" aria-label="Street completion status filter">
+            <button id="tab-all" class="status-tab active" data-filter="all">All</button>
+            <button id="tab-partial" class="status-tab" data-filter="partial">In Progress</button>
+            <button id="tab-done" class="status-tab" data-filter="done">Completed</button>
+            <button id="tab-todo" class="status-tab" data-filter="todo">Unwalked</button>
+          </nav>
+        </section>
 
-    <!-- Strava / Garmin GPX Sync Modal -->
+        <div id="street-list" class="street-list-container" role="list"></div>
+      </aside>
+    </div>
+
+    <!-- Sync Modal: Strava, GPX import, backup -->
     <div id="sync-modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="sync-modal-title">
       <div class="modal-card panel-surface">
         <div class="modal-header">
-          <h2 id="sync-modal-title" class="modal-title">Sync Walks (Strava &amp; Garmin)</h2>
+          <h2 id="sync-modal-title" class="modal-title">Sync</h2>
           <button id="btn-close-sync-modal" class="inspector-close" aria-label="Close sync modal">&times;</button>
         </div>
 
-        <!-- Option 1: Drop Garmin / Strava GPX, TCX, or JSON -->
+        <!-- Strava -->
         <div class="sync-section">
           <div class="sync-section-title">
-            <span>1. Drop Garmin / Strava GPX or JSON files</span>
-            <span class="brand-tag">instant · 100% free</span>
+            <span>Strava</span>
+            <span id="strava-write-status" class="brand-tag">not connected</span>
           </div>
-          <p class="sync-section-desc">
-            Select one or more <code>.gpx</code>, <code>.tcx</code>, or Strava activity <code>.json</code> files from your phone or computer. Every GPS trace snaps against all 14,203 SF blocks locally.
-          </p>
-          <label for="input-file-upload" class="dropzone-label" id="file-dropzone">
-            <strong>Tap to choose .GPX / .TCX / .JSON files</strong>
-            <span>or drag and drop multiple activity files here</span>
-            <input id="input-file-upload" type="file" accept=".gpx,.tcx,.json" multiple style="display:none;" />
-          </label>
-        </div>
-
-        <!-- Option 2: Direct Strava Access Token -->
-        <div class="sync-section">
-          <div class="sync-section-title">
-            <span>2. Strava API Sync (Access Token or OAuth)</span>
-            <span class="brand-tag">strava v3 api</span>
-          </div>
-          <p class="sync-section-desc">
-            Create a free personal API app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener" style="color:var(--accent-orange);">strava.com/settings/api</a> (set Callback Domain to this page's host). Paste your Access Token below, or use Client ID + Secret for 1-click OAuth refresh.
-          </p>
           <div class="filter-row">
-            <input
-              id="input-strava-token"
-              type="password"
-              class="input-control"
-              placeholder="Paste Strava Access Token (read,activity:read_all)"
-            />
-            <button id="btn-sync-strava-token" class="btn btn-primary">Fetch Strava</button>
+            <button id="btn-sync-now" type="button" class="btn btn-primary" style="flex:1;">↻ Sync Walks Now</button>
+            <button id="btn-strava-oauth" type="button" class="btn" style="flex:1;">Connect Strava</button>
           </div>
 
-          <div class="form-grid" style="margin-top: 4px;">
-            <input id="input-strava-client-id" type="text" class="input-control" placeholder="Strava Client ID (optional)" />
-            <input id="input-strava-client-secret" type="password" class="input-control" placeholder="Client Secret (stored locally)" />
-          </div>
-          <button id="btn-strava-oauth" class="btn btn-sm" style="align-self: flex-start;">
-            Connect via Strava OAuth Redirect
-          </button>
-
-          <!-- Progress summaries written into Strava activity descriptions -->
-          <div class="summary-toggle-row">
-            <label class="toggle-label" for="chk-auto-post-summary">
-              <input id="chk-auto-post-summary" type="checkbox" checked />
-              Auto-post progress summary to new Strava walks
-            </label>
-            <span id="strava-write-status" class="brand-tag">connect strava first</span>
-          </div>
+          <label class="toggle-label" for="chk-auto-post-summary">
+            <input id="chk-auto-post-summary" type="checkbox" checked />
+            Auto-post progress summary to new walks
+          </label>
           <pre id="summary-preview" class="summary-preview">Sync a Strava walk in SF to preview its summary.</pre>
           <div class="filter-row">
             <button id="btn-post-latest-summary" type="button" class="btn btn-sm" style="flex:1;">
               Post to Latest Walk
             </button>
-            <button id="btn-post-pending-summaries" type="button" class="btn btn-sm" style="flex:1;">
-              Post Pending (<span id="pending-summary-count">0</span>)
-            </button>
+            <button id="btn-post-pending-summaries" type="button" class="btn btn-sm" style="flex:1;">Post Pending (<span id="pending-summary-count">0</span>)</button>
           </div>
+
+          <details id="strava-setup" class="setup-details">
+            <summary>Connection setup</summary>
+            <p class="sync-section-desc">
+              Create a free API app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>
+              with Authorization Callback Domain <code>strange-habits.com</code>, then connect.
+            </p>
+            <div class="form-grid">
+              <input id="input-strava-client-id" type="text" class="input-control" placeholder="Client ID" />
+              <input id="input-strava-client-secret" type="password" class="input-control" placeholder="Client Secret (stored on this device)" />
+            </div>
+            <div class="filter-row">
+              <input id="input-strava-token" type="password" class="input-control" placeholder="Or paste an Access Token" />
+              <button id="btn-sync-strava-token" type="button" class="btn btn-sm">Fetch</button>
+            </div>
+          </details>
         </div>
 
-        <!-- Option 3: Backup / Restore Progress JSON -->
+        <!-- Garmin / GPX -->
         <div class="sync-section">
           <div class="sync-section-title">
-            <span>3. Export / Backup Your Progress</span>
-            <span class="brand-tag">offline backup</span>
+            <span>Garmin / GPX files</span>
+            <span class="brand-tag">.gpx · .tcx · .json</span>
           </div>
-          <div class="filter-row">
-            <button id="btn-export-backup" class="btn btn-sm" style="flex:1;">Download Backup (.json)</button>
-            <button id="btn-load-samples-from-modal" class="btn btn-sm" style="flex:1;">Load 5 Sample SF Walks</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Walk Club / Mailing List Modal -->
-    <div id="walkclub-modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="walkclub-modal-title">
-      <div class="modal-card panel-surface">
-        <div class="modal-header">
-          <h2 id="walkclub-modal-title" class="modal-title">sf walk club // mailing list</h2>
-          <button id="btn-close-walkclub-modal" class="inspector-close" aria-label="Close walk club modal">&times;</button>
+          <label for="input-file-upload" class="dropzone-label" id="file-dropzone">
+            <strong>Tap to choose activity files</strong>
+            <span>Every GPS trace snaps against all 15,168 SF blocks on your device.</span>
+            <input id="input-file-upload" type="file" accept=".gpx,.tcx,.json" multiple style="display:none;" />
+          </label>
         </div>
 
-        <!-- Upcoming Walk Card -->
-        <div class="sync-section" id="upcoming-walk-card">
+        <!-- Backup -->
+        <div class="sync-section">
           <div class="sync-section-title">
-            <span id="upcoming-walk-title">Walk #01: Haight &amp; Buena Vista Loops</span>
-            <span class="brand-tag" id="upcoming-walk-date">Saturday · 10:30 AM</span>
+            <span>Backup</span>
+            <span class="brand-tag">offline copy</span>
           </div>
-          <p class="sync-section-desc" id="upcoming-walk-meta">
-            <strong>Meetup:</strong> <span id="upcoming-walk-meetup">Duboce Park Cafe</span> · <span id="upcoming-walk-nhood">Haight Ashbury</span>
-          </p>
-          <p class="sync-section-desc" id="upcoming-walk-notes">
-            Coffee at Duboce Park, then knocking out blocks around Haight &amp; Buena Vista.
-          </p>
-          <div class="filter-row" style="margin-top: 4px;">
-            <button id="btn-preview-upcoming-route" class="btn btn-sm" style="flex:1;">
-              Highlight Target Streets on Map
-            </button>
-            <button id="btn-copy-walk-link" class="btn btn-sm" style="flex:1;">
-              Copy Shareable Map Link
-            </button>
-          </div>
+          <button id="btn-export-backup" type="button" class="btn btn-sm">Download Backup (.json)</button>
         </div>
-
-        <!-- Subscribe Form (POSTs to personal Gmail Apps Script Web App) -->
-        <form id="form-walkclub-subscribe" class="sync-section">
-          <div class="sync-section-title">
-            <span>Get Upcoming Walk Invites</span>
-            <span class="brand-tag">personal email list</span>
-          </div>
-          <p class="sync-section-desc">
-            Drop your email to get a short heads-up with the meetup spot and highlighted street map before the next walk.
-          </p>
-          <div class="form-grid">
-            <input id="input-sub-name" type="text" class="input-control" placeholder="First name" />
-            <input id="input-sub-nhood" type="text" class="input-control" placeholder="Your SF neighborhood (optional)" />
-          </div>
-          <div class="filter-row">
-            <input id="input-sub-email" type="email" class="input-control" placeholder="you@gmail.com" required />
-            <button id="btn-submit-subscribe" type="submit" class="btn btn-primary">Join List</button>
-          </div>
-        </form>
-
-        <!-- Apps Script Web App Endpoint Config (so Tanner can paste his personal Gmail Web App URL) -->
-        <details class="sync-section" style="cursor:pointer;">
-          <summary class="sync-section-title" style="list-style:none;">
-            <span>Organizer Config (Personal Gmail Apps Script URL)</span>
-            <span class="brand-tag">admin</span>
-          </summary>
-          <p class="sync-section-desc" style="margin-top:6px;">
-            Paste your personal Gmail Apps Script Web App URL (from deploying <code>apps-script.gs</code> on a personal Google Sheet):
-          </p>
-          <div class="filter-row" style="margin-top:6px;">
-            <input
-              id="input-apps-script-url"
-              type="url"
-              class="input-control"
-              placeholder="https://script.google.com/macros/s/.../exec"
-            />
-            <button id="btn-save-apps-script-url" type="button" class="btn btn-sm">Save URL</button>
-          </div>
-        </details>
       </div>
     </div>
 

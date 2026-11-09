@@ -1,7 +1,6 @@
-const CACHE_NAME = 'sf-streets-v6';
+const CACHE_NAME = 'sf-streets-v7';
 const DATA_ASSETS = [
-  './data/sf-streets.json?v=4',
-  './data/sample-walks.json'
+  './data/sf-streets.json?v=5',
 ];
 
 self.addEventListener('install', (event) => {
@@ -28,7 +27,6 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   // Cache-first for static street network JSON; network-first for app shell
-  if (url.pathname.endsWith('sf-streets.json') || url.pathname.endsWith('sample-walks.json')) {
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request))
     );

@@ -78,40 +78,41 @@ html, body {
   z-index: 1;
 }
 
-/* Left Sidebar / Mobile Bottom Drawer */
-.sidebar-panel {
+/* Desktop: one left column holding the top bar + street drawer */
+.side-column {
   position: relative;
   z-index: 10;
   width: 400px;
   max-width: calc(100vw - 24px);
   height: calc(100dvh - 24px);
   margin: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.top-bar {
+  padding: 14px 16px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-panel {
+  flex: 1;
+  min-height: 0;
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* Header */
-.brand-header {
-  padding: 16px 18px 14px;
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .brand-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-}
-
-.brand-title-group {
-  display: flex;
-  align-items: baseline;
   gap: 8px;
 }
 
@@ -134,6 +135,24 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.gps-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-orange);
+}
+
+.gps-dot.recording {
+  background: var(--accent-emerald);
+  box-shadow: 0 0 0 0 hsla(152, 69%, 45%, 0.6);
+  animation: gps-pulse 1.4s ease-out infinite;
+}
+
+@keyframes gps-pulse {
+  to { box-shadow: 0 0 0 7px hsla(152, 69%, 45%, 0); }
 }
 
 /* Buttons */
@@ -533,17 +552,28 @@ html, body {
   max-width: 100%;
   max-height: 90dvh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   border-radius: var(--radius-lg);
-  padding: 20px 22px;
+  padding: 0 22px 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 18px 0 12px;
+  margin: 0 -22px;
+  padding-left: 22px;
+  padding-right: 22px;
+  background: var(--bg-panel-solid);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .modal-title {
@@ -554,11 +584,39 @@ html, body {
 .sync-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   padding: 13px 14px;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+}
+
+.sync-section a {
+  color: var(--accent-orange);
+}
+
+.setup-details {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-details summary {
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  list-style: none;
+}
+
+.setup-details summary::before {
+  content: '▸ ';
+}
+
+.setup-details[open] summary::before {
+  content: '▾ ';
 }
 
 .sync-section-title {
@@ -600,14 +658,6 @@ html, body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-}
-
-.summary-toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 4px;
 }
 
 .toggle-label {
@@ -664,50 +714,132 @@ html, body {
 }
 
 @media (max-width: 768px) {
-  .sidebar-panel {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    max-width: 100%;
-    height: 54dvh;
-    margin: 0;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    border-bottom: none;
+  :root {
+    --topbar-h: 118px;
+    --sheet-peek: 128px;
   }
 
-  .sidebar-panel.minimized {
-    transform: translateY(calc(54dvh - 138px));
+  /* Column dissolves: top bar pins to the top, drawer becomes a bottom sheet */
+  .side-column {
+    display: contents;
+  }
+
+  .top-bar {
+    position: absolute;
+    top: calc(8px + env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    z-index: 10;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .sidebar-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 11;
+    height: 74dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom);
+    will-change: transform;
+  }
+
+  .sidebar-panel.collapsed {
+    transform: translateY(calc(100% - var(--sheet-peek)));
   }
 
   .mobile-sheet-toggle {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 0 2px;
+    width: 100%;
+    padding: 12px 0 6px;
+    background: transparent;
+    border: none;
     cursor: pointer;
+    touch-action: none;
   }
 
   .sheet-grab-bar {
-    width: 36px;
-    height: 4px;
+    width: 40px;
+    height: 5px;
     background: var(--border-strong);
     border-radius: 99px;
   }
 
+  .controls-section {
+    padding: 4px 14px 12px;
+    border-bottom: none;
+  }
+
+  .street-list-container {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: 8px;
+    overscroll-behavior: contain;
+  }
+
   .map-overlay-top-right {
-    top: 10px;
-    right: 10px;
-    left: 10px;
+    top: calc(var(--topbar-h) + 16px + env(safe-area-inset-top));
+    right: 8px;
+    left: 8px;
     align-items: stretch;
   }
 
   .map-legend-pill {
     justify-content: space-between;
+    padding: 6px 12px;
   }
 
   .inspector-card {
     width: 100%;
+  }
+
+  /* Pinch-zoom instead of buttons; they would sit under the sheet anyway */
+  .maplibregl-ctrl-bottom-right {
+    display: none;
+  }
+
+  .status-toast {
+    left: 12px;
+    right: 12px;
+    bottom: calc(var(--sheet-peek) + 12px);
+    text-align: center;
+  }
+
+  /* Sync modal becomes a full-width bottom sheet */
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-card {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding: 0 16px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .modal-header {
+    margin: 0 -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .progress-summary {
+    padding: 10px 12px;
+    gap: 6px;
+  }
+
+  .progress-big-pct {
+    font-size: 1.35rem;
   }
 }
