@@ -712,15 +712,15 @@ async function getValidStravaAccessToken() {
   }
 
   if (cfg.refreshToken && cfg.clientId && cfg.clientSecret) {
-    const res = await fetch('https://www.strava.com/oauth/token', {
+    const body = new URLSearchParams({
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      grant_type: 'refresh_token',
+      refresh_token: cfg.refreshToken
+    });
+    const res = await fetch('https://www.strava.com/api/v3/oauth/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: cfg.clientId,
-        client_secret: cfg.clientSecret,
-        grant_type: 'refresh_token',
-        refresh_token: cfg.refreshToken
-      })
+      body
     });
     if (!res.ok) throw new Error(`Token refresh failed (${res.status})`);
     const data = await res.json();
@@ -819,15 +819,15 @@ async function checkStravaOAuthCallback() {
 
   try {
     showToast('Linking Strava account...');
-    const res = await fetch('https://www.strava.com/oauth/token', {
+    const body = new URLSearchParams({
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      code,
+      grant_type: 'authorization_code'
+    });
+    const res = await fetch('https://www.strava.com/api/v3/oauth/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: cfg.clientId,
-        client_secret: cfg.clientSecret,
-        code,
-        grant_type: 'authorization_code'
-      })
+      body
     });
     const data = await res.json();
     if (data.access_token) {
@@ -838,7 +838,7 @@ async function checkStravaOAuthCallback() {
       });
       await fetchStravaActivitiesWithToken(data.access_token);
     } else {
-      showToast('Strava OAuth token exchange failed.');
+      showToast(`Strava OAuth error: ${data.message || 'token exchange failed'}`);
     }
   } catch (err) {
     showToast(`OAuth error: ${err.message}`);
@@ -1215,11 +1215,24 @@ async function handleUploadedFiles(fileList) {
   }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  if (
+    window.location.protocol === 'http:' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    window.location.replace(window.location.href.replace(/^http:/, 'https:'));
+    return;
+  }
+
+  if ('serviceWorker' in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.register('./sw.js');
+      await reg.update();
+    } catch {}
+  }
+
   initMap();
   wireEvents();
   loadInitialData();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  }
 });

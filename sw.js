@@ -1,18 +1,12 @@
-const CACHE_NAME = 'sf-streets-v2';
-const ASSETS = [
-  './',
-  './index.html',
-  './index.css',
-  './app.js',
-  './manifest.json',
-  './icon.svg',
+const CACHE_NAME = 'sf-streets-v3';
+const DATA_ASSETS = [
   './data/sf-streets.json',
   './data/sample-walks.json'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(DATA_ASSETS))
   );
   self.skipWaiting();
 });
@@ -28,7 +22,20 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+
+  // Never intercept cross-origin API calls (Strava API, MapLibre tiles, fonts)
+  if (url.origin !== self.location.origin) return;
+
+  // Cache-first for static 2.2MB street network JSON; network-first for app shell
+  if (url.pathname.endsWith('sf-streets.json') || url.pathname.endsWith('sample-walks.json')) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => cached || fetch(event.request))
+    );
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });
