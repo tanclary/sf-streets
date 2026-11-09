@@ -1,6 +1,6 @@
-const CACHE_NAME = 'sf-streets-v3';
+const CACHE_NAME = 'sf-streets-v4';
 const DATA_ASSETS = [
-  './data/sf-streets.json',
+  './data/sf-streets.json?v=4',
   './data/sample-walks.json'
 ];
 
@@ -27,7 +27,7 @@ self.addEventListener('fetch', (event) => {
   // Never intercept cross-origin API calls (Strava API, MapLibre tiles, fonts)
   if (url.origin !== self.location.origin) return;
 
-  // Cache-first for static 2.2MB street network JSON; network-first for app shell
+  // Cache-first for static street network JSON; network-first for app shell
   if (url.pathname.endsWith('sf-streets.json') || url.pathname.endsWith('sample-walks.json')) {
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request))

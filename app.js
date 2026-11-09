@@ -908,7 +908,7 @@ function toggleLiveGpsRecording() {
 
 async function loadInitialData() {
   try {
-    const res = await fetch('./data/sf-streets.json');
+    const res = await fetch('./data/sf-streets.json?v=4');
     const blocks = await res.json();
     state.blocks = blocks;
 
@@ -1227,7 +1227,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=3');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=4');
       await reg.update();
     } catch {}
   }
