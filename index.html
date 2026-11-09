@@ -19,8 +19,8 @@
 
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
   <script defer src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <link rel="stylesheet" href="./index.css?v=4" />
-  <script defer src="./app.js?v=4"></script>
+  <link rel="stylesheet" href="./index.css?v=5" />
+  <script defer src="./app.js?v=5"></script>
 </head>
 <body>
   <main class="app-shell">
@@ -73,6 +73,9 @@
             <span class="brand-tag">// 415 log</span>
           </div>
           <div class="header-actions">
+            <button id="btn-open-walkclub-modal" class="btn btn-sm" title="Upcoming walk & email list">
+              Walk Club
+            </button>
             <button id="btn-record-gps" class="btn btn-sm" title="Record live walk using phone GPS">
               <span id="gps-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ee5630;"></span>
               <span id="gps-btn-label">Live GPS</span>
@@ -191,6 +194,77 @@
             <button id="btn-load-samples-from-modal" class="btn btn-sm" style="flex:1;">Load 5 Sample SF Walks</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Walk Club / Mailing List Modal -->
+    <div id="walkclub-modal-backdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="walkclub-modal-title">
+      <div class="modal-card panel-surface">
+        <div class="modal-header">
+          <h2 id="walkclub-modal-title" class="modal-title">sf walk club // mailing list</h2>
+          <button id="btn-close-walkclub-modal" class="inspector-close" aria-label="Close walk club modal">&times;</button>
+        </div>
+
+        <!-- Upcoming Walk Card -->
+        <div class="sync-section" id="upcoming-walk-card">
+          <div class="sync-section-title">
+            <span id="upcoming-walk-title">Walk #01: Haight &amp; Buena Vista Loops</span>
+            <span class="brand-tag" id="upcoming-walk-date">Saturday · 10:30 AM</span>
+          </div>
+          <p class="sync-section-desc" id="upcoming-walk-meta">
+            <strong>Meetup:</strong> <span id="upcoming-walk-meetup">Duboce Park Cafe</span> · <span id="upcoming-walk-nhood">Haight Ashbury</span>
+          </p>
+          <p class="sync-section-desc" id="upcoming-walk-notes">
+            Coffee at Duboce Park, then knocking out blocks around Haight &amp; Buena Vista.
+          </p>
+          <div class="filter-row" style="margin-top: 4px;">
+            <button id="btn-preview-upcoming-route" class="btn btn-sm" style="flex:1;">
+              Highlight Target Streets on Map
+            </button>
+            <button id="btn-copy-walk-link" class="btn btn-sm" style="flex:1;">
+              Copy Shareable Map Link
+            </button>
+          </div>
+        </div>
+
+        <!-- Subscribe Form (POSTs to personal Gmail Apps Script Web App) -->
+        <form id="form-walkclub-subscribe" class="sync-section">
+          <div class="sync-section-title">
+            <span>Get Upcoming Walk Invites</span>
+            <span class="brand-tag">personal email list</span>
+          </div>
+          <p class="sync-section-desc">
+            Drop your email to get a short heads-up with the meetup spot and highlighted street map before the next walk.
+          </p>
+          <div class="form-grid">
+            <input id="input-sub-name" type="text" class="input-control" placeholder="First name" />
+            <input id="input-sub-nhood" type="text" class="input-control" placeholder="Your SF neighborhood (optional)" />
+          </div>
+          <div class="filter-row">
+            <input id="input-sub-email" type="email" class="input-control" placeholder="you@gmail.com" required />
+            <button id="btn-submit-subscribe" type="submit" class="btn btn-primary">Join List</button>
+          </div>
+        </form>
+
+        <!-- Apps Script Web App Endpoint Config (so Tanner can paste his personal Gmail Web App URL) -->
+        <details class="sync-section" style="cursor:pointer;">
+          <summary class="sync-section-title" style="list-style:none;">
+            <span>Organizer Config (Personal Gmail Apps Script URL)</span>
+            <span class="brand-tag">admin</span>
+          </summary>
+          <p class="sync-section-desc" style="margin-top:6px;">
+            Paste your personal Gmail Apps Script Web App URL (from deploying <code>apps-script.gs</code> on a personal Google Sheet):
+          </p>
+          <div class="filter-row" style="margin-top:6px;">
+            <input
+              id="input-apps-script-url"
+              type="url"
+              class="input-control"
+              placeholder="https://script.google.com/macros/s/.../exec"
+            />
+            <button id="btn-save-apps-script-url" type="button" class="btn btn-sm">Save URL</button>
+          </div>
+        </details>
       </div>
     </div>
 

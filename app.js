@@ -2,6 +2,9 @@
 
 const STORAGE_KEY_STATE = 'sf_streets_state_v1';
 const STORAGE_KEY_STRAVA = 'sf_streets_strava_cfg_v1';
+const STORAGE_KEY_WALKCLUB_URL = 'sf_streets_walkclub_url_v1';
+// Default personal Gmail Apps Script Web App URL (can be hardcoded here once deployed or set in UI)
+const DEFAULT_WALK_CLUB_SCRIPT_URL = '';
 const SNAP_RADIUS_METERS = 28;
 const GRID_CELL_DEG = 0.0025; // ~250m grid cells
 
@@ -15,6 +18,15 @@ const state = {
   walks: [],             // [{ id, name, date, source, coords: [[lng,lat],...] }]
   selectedBlockId: null,
   selectedStreetName: null,
+  highlightedStreets: new Set(),
+  upcomingWalk: {
+    title: 'Walk #01: Haight & Buena Vista Loops',
+    dateTime: 'Saturday · 10:30 AM',
+    meetupSpot: 'Duboce Park Cafe',
+    neighborhood: 'Haight Ashbury',
+    targetStreets: ['Haight St', 'Waller St', 'Cole St', 'Belvedere St', 'Ashbury St'],
+    notes: 'Coffee at Duboce Park, then knocking out blocks around Haight & Buena Vista.'
+  },
   filterStatus: 'all',
   filterNeighborhood: 'ALL',
   searchQuery: '',
@@ -271,7 +283,8 @@ function buildBlocksGeoJSON() {
     const isWalked = state.walkedBlockIds.has(b.id);
     const isSelected =
       b.id === state.selectedBlockId ||
-      (state.selectedStreetName && b.s === state.selectedStreetName);
+      (state.selectedStreetName && b.s === state.selectedStreetName) ||
+      state.highlightedStreets.has(b.s.toLowerCase());
 
     features.push({
       type: 'Feature',
@@ -594,6 +607,7 @@ function selectBlock(blockId, flyTo = false) {
   if (!b) return;
   state.selectedBlockId = b.id;
   state.selectedStreetName = null;
+  state.highlightedStreets.clear();
   refreshMapSources();
   updateInspectorUI();
 
@@ -606,6 +620,7 @@ function selectBlock(blockId, flyTo = false) {
 function selectStreetByName(streetName, blockIds) {
   state.selectedStreetName = streetName;
   state.selectedBlockId = blockIds && blockIds.length ? blockIds[0] : null;
+  state.highlightedStreets.clear();
   refreshMapSources();
   updateDashboardStats();
 
@@ -620,6 +635,38 @@ function selectStreetByName(streetName, blockIds) {
       }
     }
     map.fitBounds(bounds, { padding: 80, maxZoom: 16, duration: 850 });
+  }
+}
+
+function highlightStreetListOnMap(streetNames, optionalNeighborhood) {
+  if (!Array.isArray(streetNames) || streetNames.length === 0) return;
+  if (optionalNeighborhood && optionalNeighborhood !== 'ALL') {
+    const sel = document.getElementById('select-neighborhood');
+    if (sel && Array.from(sel.options).some((o) => o.value === optionalNeighborhood)) {
+      state.filterNeighborhood = optionalNeighborhood;
+      sel.value = optionalNeighborhood;
+    }
+  }
+
+  state.highlightedStreets = new Set(streetNames.map((s) => s.trim().toLowerCase()).filter(Boolean));
+  state.selectedStreetName = null;
+  state.selectedBlockId = null;
+  refreshMapSources();
+  updateDashboardStats();
+
+  if (map) {
+    const bounds = new maplibregl.LngLatBounds();
+    let count = 0;
+    for (const b of state.blocks) {
+      if (state.highlightedStreets.has(b.s.toLowerCase())) {
+        if (state.filterNeighborhood !== 'ALL' && b.n !== state.filterNeighborhood) continue;
+        for (const pt of b.c) bounds.extend(pt);
+        count++;
+      }
+    }
+    if (count > 0) {
+      map.fitBounds(bounds, { padding: 70, maxZoom: 15.5, duration: 900 });
+    }
   }
 }
 
@@ -943,6 +990,8 @@ async function loadInitialData() {
     updateDashboardStats();
     refreshMapSources();
     checkStravaOAuthCallback();
+    checkUrlWalkHighlight();
+    loadUpcomingWalkFromSheet();
   } catch (err) {
     console.error('Failed to load SF street data:', err);
     showToast('Error loading SF street network.');
@@ -1160,6 +1209,133 @@ function wireEvents() {
     a.click();
     URL.revokeObjectURL(url);
   });
+
+  // Walk Club / Mailing List Modal
+  const walkModal = document.getElementById('walkclub-modal-backdrop');
+  const scriptUrlInput = document.getElementById('input-apps-script-url');
+  if (scriptUrlInput) {
+    scriptUrlInput.value = getWalkClubScriptUrl();
+  }
+
+  document.getElementById('btn-open-walkclub-modal').addEventListener('click', () => {
+    renderUpcomingWalkCard();
+    walkModal.classList.remove('hidden');
+  });
+  document.getElementById('btn-close-walkclub-modal').addEventListener('click', () => {
+    walkModal.classList.add('hidden');
+  });
+  walkModal.addEventListener('click', (e) => {
+    if (e.target === walkModal) walkModal.classList.add('hidden');
+  });
+
+  document.getElementById('btn-preview-upcoming-route').addEventListener('click', () => {
+    walkModal.classList.add('hidden');
+    highlightStreetListOnMap(
+      state.upcomingWalk.targetStreets,
+      state.upcomingWalk.neighborhood
+    );
+    showToast(`Highlighted ${state.upcomingWalk.targetStreets.length} target streets on map!`);
+  });
+
+  document.getElementById('btn-copy-walk-link').addEventListener('click', async () => {
+    const base = window.location.origin + window.location.pathname;
+    const url =
+      `${base}?streets=${encodeURIComponent(state.upcomingWalk.targetStreets.join(','))}` +
+      (state.upcomingWalk.neighborhood
+        ? `&nhood=${encodeURIComponent(state.upcomingWalk.neighborhood)}`
+        : '');
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('Copied shareable walk route link!');
+    } catch {
+      showToast(url);
+    }
+  });
+
+  document.getElementById('btn-save-apps-script-url').addEventListener('click', () => {
+    const val = document.getElementById('input-apps-script-url').value.trim();
+    localStorage.setItem(STORAGE_KEY_WALKCLUB_URL, val);
+    showToast('Saved personal Gmail Apps Script URL!');
+    loadUpcomingWalkFromSheet();
+  });
+
+  document.getElementById('form-walkclub-subscribe').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('input-sub-email').value.trim();
+    const name = document.getElementById('input-sub-name').value.trim();
+    const neighborhood = document.getElementById('input-sub-nhood').value.trim();
+    const scriptUrl = getWalkClubScriptUrl();
+
+    if (!scriptUrl) {
+      showToast('Set your personal Gmail Apps Script Web App URL under Organizer Config first!');
+      return;
+    }
+
+    const submitBtn = document.getElementById('btn-submit-subscribe');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Joining...';
+
+    try {
+      await fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ email, name, neighborhood })
+      });
+      document.getElementById('input-sub-email').value = '';
+      showToast('Added to the SF Walk Club mailing list!');
+    } catch (err) {
+      showToast(`Could not subscribe: ${err.message}`);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Join List';
+    }
+  });
+}
+
+function getWalkClubScriptUrl() {
+  return localStorage.getItem(STORAGE_KEY_WALKCLUB_URL) || DEFAULT_WALK_CLUB_SCRIPT_URL;
+}
+
+function renderUpcomingWalkCard() {
+  const w = state.upcomingWalk;
+  if (!w) return;
+  document.getElementById('upcoming-walk-title').textContent = w.title;
+  document.getElementById('upcoming-walk-date').textContent = w.dateTime;
+  document.getElementById('upcoming-walk-meetup').textContent = w.meetupSpot;
+  document.getElementById('upcoming-walk-nhood').textContent = w.neighborhood;
+  document.getElementById('upcoming-walk-notes').textContent =
+    `${w.notes} (Targets: ${w.targetStreets.join(', ')})`;
+}
+
+async function loadUpcomingWalkFromSheet() {
+  renderUpcomingWalkCard();
+  const scriptUrl = getWalkClubScriptUrl();
+  if (!scriptUrl) return;
+  try {
+    const res = await fetch(scriptUrl);
+    const data = await res.json();
+    if (data && data.upcomingWalk && data.upcomingWalk.title) {
+      state.upcomingWalk = data.upcomingWalk;
+      renderUpcomingWalkCard();
+    }
+  } catch (err) {
+    console.warn('Could not fetch upcoming walk from Apps Script:', err);
+  }
+}
+
+function checkUrlWalkHighlight() {
+  const params = new URLSearchParams(window.location.search);
+  const streetsParam = params.get('streets');
+  if (!streetsParam) return;
+  const nhoodParam = params.get('nhood') || '';
+  const list = streetsParam.split(',').map((s) => s.trim()).filter(Boolean);
+  if (list.length > 0) {
+    setTimeout(() => {
+      highlightStreetListOnMap(list, nhoodParam);
+      showToast(`Showing planned walk route (${list.length} streets)`);
+    }, 600);
+  }
 }
 
 async function handleUploadedFiles(fileList) {
@@ -1227,7 +1403,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   if ('serviceWorker' in navigator) {
     try {
-      const reg = await navigator.serviceWorker.register('./sw.js?v=4');
+      const reg = await navigator.serviceWorker.register('./sw.js?v=5');
       await reg.update();
     } catch {}
   }
